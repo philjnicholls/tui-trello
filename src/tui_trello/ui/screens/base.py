@@ -1,6 +1,6 @@
 """Behaviour shared by the screens.
 
-- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, open in browser). A new card feature
+- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, labels, checklist, open in browser). A new card feature
   (archive, assign, label, due date, ...) is added here once, as a binding plus an action, and works in every view.
   Subclasses only say which card is current.
 - :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`.
@@ -25,7 +25,13 @@ from textual.widgets import Input
 from tui_trello.backend import BackendError
 from tui_trello.models import BoardSnapshot, Card
 from tui_trello.query import CardQuery
-from tui_trello.ui.screens.picker import Choice, LabelPickerScreen, PickerScreen, TextPromptScreen
+from tui_trello.ui.screens.picker import (
+    ChecklistPickerScreen,
+    Choice,
+    LabelPickerScreen,
+    PickerScreen,
+    TextPromptScreen,
+)
 
 
 class TopBar(Horizontal):
@@ -47,6 +53,7 @@ class CardActionsScreen(Screen):
         Binding("m", "move_card", "Move"),
         Binding("c", "comment", "Comment"),
         Binding("t", "labels", "Labels"),
+        Binding("x", "checklist", "Checklist"),
         Binding("o", "open_in_browser", "Open in browser", show=False),
     ]
 
@@ -97,6 +104,10 @@ class CardActionsScreen(Screen):
     def action_labels(self) -> None:
         if card := self.current_card():
             self.app.push_screen(LabelPickerScreen(card.id))
+
+    def action_checklist(self) -> None:
+        if card := self.current_card():
+            self.app.push_screen(ChecklistPickerScreen(card.id))
 
     def action_open_in_browser(self) -> None:
         if (card := self.current_card()) and card.url:

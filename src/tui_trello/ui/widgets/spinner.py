@@ -7,7 +7,8 @@ from textual.widgets import Static
 
 FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 LABELS = {"board": "loading board", "work": "loading your cards", "boards": "loading boards",
-          "comments": "loading comments", "labels": "loading labels", "members": "loading members", "save": "saving"}
+          "comments": "loading comments", "checklists": "loading checklists", "labels": "loading labels",
+          "members": "loading members", "save": "saving"}
 
 
 class Spinner(Static):

@@ -85,6 +85,7 @@ Vim-style throughout; `?` shows them all in the app.
 | `b`                    | pick a board                                                                       |
 | `m` `c` `o`            | move, comment (enter sends, alt+enter new line, `@` mentions), open in the browser |
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |
+| `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |
 | `p`                    | my work: toggle the preview                                                        |
 | `r`                    | reload                                                                             |

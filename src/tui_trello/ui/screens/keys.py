@@ -32,6 +32,7 @@ KEYS = [
         ("m", "move to another list"),
         ("c", "comment: enter sends, alt+enter new line, @ mentions someone (tab or enter picks)"),
         ("t", "labels: enter puts one on or takes it off; type a new name to create one"),
+        ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
         ("o", "open in the web browser"),
     ]),
     ("Pickers", [

@@ -1,4 +1,4 @@
-"""Reusable modals: a fuzzy picker (boards, lists, labels, ...) and a text prompt (comments, ...)."""
+"""Reusable modals: a fuzzy picker (boards, lists, labels, checklist items, ...) and a text prompt (comments, ...)."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from textual.widgets.option_list import Option
 
 from tui_trello.backend import BackendError
 from tui_trello.mentions import candidates, typing_mention
-from tui_trello.models import Member
+from tui_trello.models import Checklist, Member
 from tui_trello.ui.bidi import BidiText, has_rtl
 
 T = TypeVar("T")
@@ -327,4 +327,61 @@ class LabelPickerScreen(PickerScreen):
         self.choices = await self.label_choices()
         self.refilter()
         if highlighted is not None and not isinstance(value, tuple):
+            self.query_one(OptionList).highlighted = min(highlighted, len(self.shown) - 1)
+
+
+class ChecklistPickerScreen(PickerScreen):
+    """A card's checklist items: Enter ticks the highlighted one or unticks it, and the picker stays open so several
+    can be done; typing text that matches no item offers to add it to a checklist, or to start a new checklist."""
+
+    HINT = "enter: tick/untick · new text adds an item · esc: done"
+
+    def __init__(self, card_id: str) -> None:
+        self.card_id = card_id
+        self.checklists: list[Checklist] = []
+        super().__init__("Checklist", self.item_choices)
+
+    async def item_choices(self) -> list[Choice]:
+        from tui_trello.ui.bidi import visual
+
+        store = self.app.store
+        if card := store.find_card(self.card_id):
+            self.query_one(".title", Label).update(Text.assemble("Checklist for “", visual(card.name), "”"))
+        self.checklists = await store.checklists(self.card_id)
+        several = len(self.checklists) > 1
+        return [
+            Choice(item.name, ("toggle", item), checklist.name if several else "",
+                   Text("☑ ", style="green") if item.checked else Text("☐ ", style="dim"))
+            for checklist in self.checklists for item in checklist.items
+        ]
+
+    def extras(self, query: str) -> list[Choice]:
+        name = query.strip()
+        if not name or any(c.label.lower() == name.lower() for c in self.choices):
+            return []
+        plus = Text("+ ", style="bold green")
+        return [Choice(f"add “{name}” to {checklist.name}", ("add", checklist.id, name), marker=plus)
+                for checklist in self.checklists] + [Choice(f"new checklist “{name}”", ("new", name), marker=plus)]
+
+    def choose(self, choice: Choice) -> None:
+        self.apply(choice.value)
+
+    @work(exclusive=True, group="checklist")
+    async def apply(self, value: tuple) -> None:
+        store = self.app.store
+        try:
+            if value[0] == "toggle":
+                await store.toggle_check_item(self.card_id, value[1])
+            elif value[0] == "add":
+                await store.add_check_item(self.card_id, value[1], value[2])
+                self.query_one(Input).value = ""
+            else:
+                await store.create_checklist(self.card_id, value[1])
+                self.query_one(Input).value = ""
+        except BackendError as exc:
+            self.notify(str(exc), severity="error")
+        highlighted = self.query_one(OptionList).highlighted
+        self.choices = await self.item_choices()
+        self.refilter()
+        if highlighted is not None and value[0] == "toggle" and self.shown:
             self.query_one(OptionList).highlighted = min(highlighted, len(self.shown) - 1)

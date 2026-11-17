@@ -8,7 +8,17 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from tui_trello.models import Board, BoardSnapshot, Card, Comment, Label, Member, WorkSnapshot
+from tui_trello.models import (
+    Board,
+    BoardSnapshot,
+    Card,
+    CheckItem,
+    Checklist,
+    Comment,
+    Label,
+    Member,
+    WorkSnapshot,
+)
 
 
 class BackendError(Exception):
@@ -37,5 +47,13 @@ class Backend(Protocol):
     async def remove_label(self, card: Card, label: Label) -> Card: ...
 
     async def create_label(self, board_id: str, name: str, color: str | None) -> Label: ...
+
+    async def checklists(self, card_id: str) -> list[Checklist]: ...
+
+    async def set_check_item(self, card_id: str, item: CheckItem, checked: bool) -> CheckItem: ...
+
+    async def add_check_item(self, checklist_id: str, name: str) -> CheckItem: ...
+
+    async def create_checklist(self, card_id: str, name: str) -> Checklist: ...
 
     async def aclose(self) -> None: ...

@@ -10,9 +10,18 @@ from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
-from tui_trello.ui.screens.picker import LabelPickerScreen, PickerScreen
+from tui_trello.ui.screens.picker import (
+    ChecklistPickerScreen,
+    LabelPickerScreen,
+    PickerScreen,
+)
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.widgets.spinner import Spinner
+
+
+def screen_lines(app) -> list[str]:
+    return ["".join(segment.text for segment in strip).rstrip()
+            for strip in app.screen._compositor.render_update(full=True).strips]
 
 
 async def test_browse_and_open_card(app) -> None:
@@ -166,9 +175,7 @@ async def test_arabic_board(app) -> None:
         await pilot.press("l", "enter")
         await pilot.pause()
         assert isinstance(app.screen, CardScreen)
-        screen_lines = ["".join(segment.text for segment in strip).rstrip()
-                        for strip in app.screen._compositor.render_update(full=True).strips]
-        bullets = [line for line in screen_lines if line.endswith(" •")]
+        bullets = [line for line in screen_lines(app) if line.endswith(" •")]
         assert len(bullets) == 2  # the description's Arabic list, markers on the right
 
 
@@ -252,6 +259,54 @@ async def test_create_label(app) -> None:
         assert "urgent" in [lb.name for lb in app.store.find_card(card.id).labels]
         assert "urgent" in [lb.name for lb in app.store.snapshot.labels]
         assert any(c.label == "urgent" and c.hint == "✓" for c in picker.choices)
+
+
+async def test_checklist(app) -> None:
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "l")  # "Command palette: jump to any card", 1 of 4 ticked
+        card = app.screen.current_card()
+        assert card.checklist == (1, 4)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert "☐ Update the README" in "\n".join(screen_lines(app))
+        await pilot.press("x")
+        await pilot.pause()
+        assert isinstance(app.screen, ChecklistPickerScreen)
+        await pilot.press("down", "enter")  # tick the second item
+        await pilot.pause()
+        assert app.store.find_card(card.id).checklist == (2, 4)
+        await pilot.press(*"Ship it")
+        await pilot.pause()
+        assert [c.value[0] for c in app.screen.shown] == ["add", "new"]
+        await pilot.press("enter")  # add to Tasks
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.store.find_card(card.id).checklist == (2, 5)
+        assert app.store.snapshot.card(card.id).checklist == (2, 5)  # every view's badge
+        assert "☐ Ship it" in "\n".join(screen_lines(app))
+
+
+async def test_new_checklist_on_a_card_without_one(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")  # Inbox, first card: no checklist
+        card = app.screen.current_card()
+        assert not app.screen.query_one("#card-checklists").display
+        await pilot.press("x")
+        await pilot.pause()
+        await pilot.press(*"Release", "enter")  # the only offer: a new checklist
+        await pilot.pause()
+        await pilot.press(*"Tag it")
+        await pilot.pause()
+        assert [c.label for c in app.screen.shown] == ["add “Tag it” to Release", "new checklist “Tag it”"]
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.store.find_card(card.id).checklist == (0, 1)
+        assert app.screen.query_one("#card-checklists").display
 
 
 async def test_comment_enter_sends(app) -> None:

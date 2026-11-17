@@ -14,6 +14,8 @@ from tui_trello.models import (
     BoardSnapshot,
     Card,
     CardList,
+    CheckItem,
+    Checklist,
     Comment,
     Label,
     Member,
@@ -21,6 +23,8 @@ from tui_trello.models import (
 )
 
 API_ROOT = "https://api.trello.com/1"
+
+CHECK_ITEM_FIELDS = "name,state,pos"
 
 CARD_FIELDS = "name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges"
 
@@ -118,6 +122,23 @@ class TrelloBackend:
         if color:
             params["color"] = color
         return Label.from_api(await self._request("POST", "/labels", **params))
+
+    async def checklists(self, card_id: str) -> list[Checklist]:
+        data = await self._request("GET", f"/cards/{card_id}/checklists", fields="name,pos",
+                                   checkItem_fields=CHECK_ITEM_FIELDS)
+        return sorted((Checklist.from_api(c) for c in data), key=lambda c: c.pos)
+
+    async def set_check_item(self, card_id: str, item: CheckItem, checked: bool) -> CheckItem:
+        data = await self._request("PUT", f"/cards/{card_id}/checkItem/{item.id}",
+                                   state="complete" if checked else "incomplete")
+        return CheckItem.from_api(data)
+
+    async def add_check_item(self, checklist_id: str, name: str) -> CheckItem:
+        data = await self._request("POST", f"/checklists/{checklist_id}/checkItems", name=name, pos="bottom")
+        return CheckItem.from_api(data)
+
+    async def create_checklist(self, card_id: str, name: str) -> Checklist:
+        return Checklist.from_api(await self._request("POST", f"/cards/{card_id}/checklists", name=name))
 
     async def aclose(self) -> None:
         await self._http.aclose()

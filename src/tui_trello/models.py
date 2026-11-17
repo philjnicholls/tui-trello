@@ -144,6 +144,47 @@ class Comment:
         )
 
 
+@dataclass(frozen=True)
+class CheckItem:
+    id: str
+    name: str
+    checked: bool = False
+    pos: float = 0
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> CheckItem:
+        return cls(id=data["id"], name=data.get("name") or "", checked=data.get("state") == "complete",
+                   pos=data.get("pos", 0))
+
+
+@dataclass(frozen=True)
+class Checklist:
+    id: str
+    name: str
+    items: tuple[CheckItem, ...] = ()
+    pos: float = 0
+
+    @property
+    def done(self) -> int:
+        return sum(item.checked for item in self.items)
+
+    def with_item(self, item: CheckItem) -> Checklist:
+        """The checklist with `item` replaced (by id) or, if it's new, added at the end."""
+        if any(i.id == item.id for i in self.items):
+            return replace(self, items=tuple(item if i.id == item.id else i for i in self.items))
+        return replace(self, items=(*self.items, item))
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> Checklist:
+        items = sorted((CheckItem.from_api(item) for item in data.get("checkItems") or ()), key=lambda i: i.pos)
+        return cls(id=data["id"], name=data.get("name") or "", items=tuple(items), pos=data.get("pos", 0))
+
+
+def checklist_badge(checklists: list[Checklist]) -> tuple[int, int]:
+    """(checked, total) over a card's checklists, as `Card.checklist` holds it."""
+    return sum(c.done for c in checklists), sum(len(c.items) for c in checklists)
+
+
 class CardContext(Protocol):
     """What a view needs around a card to draw it and act on it. Both snapshot types provide it."""
 

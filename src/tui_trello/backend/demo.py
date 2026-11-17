@@ -12,6 +12,8 @@ from tui_trello.models import (
     BoardSnapshot,
     Card,
     CardList,
+    CheckItem,
+    Checklist,
     Comment,
     Label,
     Member,
@@ -117,6 +119,10 @@ PUT /1/cards/{id}?idList=...&pos=top
 ```
 """
 
+CHECK_ITEMS = ["Write the tests", "Update the README", "Try it on a real board", "Ask for a review",
+               "Check the Arabic board", "Take new screenshots"]
+ARABIC_CHECK_ITEMS = ["الاختبار في Chrome", "الاختبار على الجوال", "تحديث التوثيق", "طلب مراجعة الكود"]
+
 COMMENTS = [
     ("Grace Hopper", "Picker works, but it should remember the last list I moved to."),
     ("Alan Turing", "Agreed. Also: undo with `u` within a few seconds?"),
@@ -131,6 +137,7 @@ class DemoBackend:
         self._ids = (f"id{n}" for n in itertools.count(1))
         self._boards: dict[str, BoardSnapshot] = {}
         self._comments: dict[str, list[Comment]] = {}
+        self._checklists: dict[str, list[Checklist]] = {}
         for board_id, name, starred, layout in [
             ("b-product", "Product roadmap", True, PRODUCT_BOARD),
             ("b-home", "Home", False, HOME_BOARD),
@@ -155,6 +162,7 @@ class DemoBackend:
                     Comment(next(self._ids), author, text, NOW - timedelta(hours=3 * i))
                     for i, (author, text) in enumerate((ARABIC_COMMENTS if rtl else COMMENTS)[:comments])
                 ]
+                self._checklists[card_id] = self._checklist(checklist, rtl)
                 cards.append(Card(
                     id=card_id,
                     name=name,
@@ -172,6 +180,15 @@ class DemoBackend:
                     checklist=checklist,
                 ))
         return BoardSnapshot(board, lists, cards, dict(MEMBERS), list(labels_by_key.values()))
+
+    def _checklist(self, badge: tuple[int, int], rtl: bool) -> list[Checklist]:
+        """A checklist with `badge`'s (checked, total) items."""
+        checked, total = badge
+        if not total:
+            return []
+        names = ARABIC_CHECK_ITEMS if rtl else CHECK_ITEMS
+        items = tuple(CheckItem(next(self._ids), names[n % len(names)], n < checked, n) for n in range(total))
+        return [Checklist(next(self._ids), "المهام" if rtl else "Tasks", items)]
 
     def _find(self, card_id: str) -> tuple[BoardSnapshot, Card]:
         for snapshot in self._boards.values():
@@ -238,6 +255,29 @@ class DemoBackend:
         label = Label(next(self._ids), name, color)
         self._boards[board_id].labels.append(label)
         return label
+
+    async def checklists(self, card_id: str) -> list[Checklist]:
+        return list(self._checklists.get(card_id, []))
+
+    async def set_check_item(self, card_id: str, item: CheckItem, checked: bool) -> CheckItem:
+        updated = replace(item, checked=checked)
+        self._checklists[card_id] = [c.with_item(updated) if any(i.id == item.id for i in c.items) else c
+                                     for c in self._checklists.get(card_id, [])]
+        return updated
+
+    async def add_check_item(self, checklist_id: str, name: str) -> CheckItem:
+        for checklists in self._checklists.values():
+            for n, checklist in enumerate(checklists):
+                if checklist.id == checklist_id:
+                    item = CheckItem(next(self._ids), name, pos=len(checklist.items))
+                    checklists[n] = checklist.with_item(item)
+                    return item
+        raise BackendError(f"No checklist {checklist_id}")
+
+    async def create_checklist(self, card_id: str, name: str) -> Checklist:
+        checklist = Checklist(next(self._ids), name, pos=len(self._checklists.get(card_id, [])))
+        self._checklists.setdefault(card_id, []).append(checklist)
+        return checklist
 
     async def aclose(self) -> None:
         pass

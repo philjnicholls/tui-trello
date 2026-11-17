@@ -13,6 +13,10 @@ PAYLOADS = {
     "/1/boards/b1/members": [{"id": "m1", "fullName": "Ada Lovelace", "username": "ada"}],
     "/1/boards/b1/labels": [{"id": "lb1", "name": "bug", "color": "red"}],
     "/1/cards/c1": {"id": "c1", "name": "Card", "idList": "l2", "idBoard": "b1"},
+    "/1/cards/c1/checklists": [{"id": "cl1", "name": "Tasks", "pos": 1, "checkItems": [
+        {"id": "i1", "name": "Write it", "state": "incomplete", "pos": 1}]}],
+    "/1/cards/c1/checkItem/i1": {"id": "i1", "name": "Write it", "state": "complete", "pos": 1},
+    "/1/checklists/cl1/checkItems": {"id": "i2", "name": "Test it", "state": "incomplete", "pos": 2},
 }
 
 
@@ -42,6 +46,19 @@ async def test_move_card() -> None:
     assert moved.list_id == "l2"
     assert requests[-1].method == "PUT"
     assert requests[-1].url.params["idList"] == "l2"
+
+
+async def test_checklists() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    [checklist] = await backend.checklists("c1")
+    assert requests[-1].url.params["checkItem_fields"] == "name,state,pos"
+    ticked = await backend.set_check_item("c1", checklist.items[0], True)
+    assert ticked.checked
+    assert (requests[-1].method, requests[-1].url.params["state"]) == ("PUT", "complete")
+    added = await backend.add_check_item("cl1", "Test it")
+    assert added.name == "Test it" and not added.checked
+    assert (requests[-1].method, requests[-1].url.params["name"]) == ("POST", "Test it")
 
 
 async def test_no_permission() -> None:

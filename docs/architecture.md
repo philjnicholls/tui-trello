@@ -5,8 +5,9 @@ src/tui_trello/
   cli.py              argument parsing; picks a backend; starts the app
   config.py           Settings from env vars and ~/.config/tui-trello/config.toml
   auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
-  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment; BoardSnapshot (one
-                      board) and WorkSnapshot (my cards on every board), both satisfying CardContext
+  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Checklist, CheckItem;
+                      BoardSnapshot (one board) and WorkSnapshot (my cards on every board), both satisfying
+                      CardContext
   agenda.py           group cards by due date for My work
   query.py            the card filter language (#label @member list:x !overdue words)
   store.py            app-wide state: open board, my work, caches; board_changed and work_changed signals
@@ -21,16 +22,17 @@ src/tui_trello/
     bidi.py           right-to-left text: reorder per field (a compact UAX #9), BidiText, fit()
     markdown.py       Markdown in descriptions and comments as styled, RTL-aware text
     widgets/
-      card_view.py    card header, description, comments
+      card_view.py    card header, description, checklists, comments
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
     screens/
-      base.py         CardActionsScreen (m, c, o), ListScreen (/ filter), BoardScreen (redraws on board_changed)
+      base.py         CardActionsScreen (m, c, t, x, o), ListScreen (/ filter), BoardScreen (redraws on board_changed)
       browser.py      Miller columns: lists | cards | preview
       triage.py       sortable, filterable table of every card
       mywork.py       my cards on every board, grouped by due date, with preview
       card.py         full-screen card
       keys.py         the ? key reference
-      picker.py       PickerScreen (fuzzy choose one) and TextPromptScreen
+      picker.py       PickerScreen (fuzzy choose one), its label and checklist
+                      variants, and TextPromptScreen
 tests/                pytest; UI flows driven by key presses against the demo backend
 scripts/screenshots.py
 ```

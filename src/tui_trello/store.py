@@ -6,7 +6,7 @@ ones further down the stack, or in another mode) redraws from the same data.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
 
@@ -19,10 +19,13 @@ from tui_trello.models import (
     BoardSnapshot,
     Card,
     CardContext,
+    CheckItem,
+    Checklist,
     Comment,
     Label,
     Member,
     WorkSnapshot,
+    checklist_badge,
 )
 
 # Trello's label colours, in the order new labels take them.
@@ -36,11 +39,12 @@ class Store:
         self.work: WorkSnapshot | None = None
         self.board_changed: Signal[BoardSnapshot] = Signal(owner, "board_changed")
         self.work_changed: Signal[WorkSnapshot] = Signal(owner, "work_changed")
-        # What is being fetched or saved right now ("board", "work", "boards", "comments", "save"), for spinners.
+        # What is being fetched or saved right now ("board", "work", "boards", "comments", "checklists", "save"), for spinners.
         self.busy: dict[str, int] = {}
         self.busy_changed: Signal[Store] = Signal(owner, "busy_changed")
         self._boards: list[Board] | None = None
         self._comments: dict[str, list[Comment]] = {}
+        self._checklists: dict[str, list[Checklist]] = {}
         self._labels: dict[str, list[Label]] = {}  # by board, for boards other than the open one
         self._members: dict[str, list[Member]] = {}  # likewise
 
@@ -69,6 +73,7 @@ class Store:
         async with self._busy("board"):
             self.snapshot = await self.backend.board_snapshot(board_id)
         self._comments.clear()
+        self._checklists.clear()
         self.board_changed.publish(self.snapshot)
         return self.snapshot
 
@@ -108,6 +113,45 @@ class Store:
         if card := self.find_card(card_id):
             self._replace(replace(card, comment_count=card.comment_count + 1))
         return comment
+
+    def has_checklists(self, card_id: str) -> bool:
+        """Whether the card's checklists are loaded and there is at least one (perhaps with no items yet)."""
+        return bool(self._checklists.get(card_id))
+
+    async def checklists(self, card_id: str, refresh: bool = False) -> list[Checklist]:
+        if card_id not in self._checklists or refresh:
+            async with self._busy("checklists"):
+                self._checklists[card_id] = await self.backend.checklists(card_id)
+        return self._checklists[card_id]
+
+    async def toggle_check_item(self, card_id: str, item: CheckItem) -> CheckItem:
+        """Tick the item, or untick it if it's ticked."""
+        async with self._busy("save"):
+            updated = await self.backend.set_check_item(card_id, item, not item.checked)
+        self._patch_checklists(card_id, lambda checklists: [
+            c.with_item(updated) if any(i.id == item.id for i in c.items) else c for c in checklists])
+        return updated
+
+    async def add_check_item(self, card_id: str, checklist_id: str, name: str) -> CheckItem:
+        async with self._busy("save"):
+            item = await self.backend.add_check_item(checklist_id, name)
+        self._patch_checklists(card_id, lambda checklists: [
+            c.with_item(item) if c.id == checklist_id else c for c in checklists])
+        return item
+
+    async def create_checklist(self, card_id: str, name: str) -> Checklist:
+        async with self._busy("save"):
+            checklist = await self.backend.create_checklist(card_id, name)
+        self._patch_checklists(card_id, lambda checklists: [*checklists, checklist])
+        return checklist
+
+    def _patch_checklists(self, card_id: str, change: Callable[[list[Checklist]], list[Checklist]]) -> None:
+        """Apply `change` to the card's cached checklists, if they are loaded, and bring its ☑ badge in line."""
+        if card_id not in self._checklists:
+            return  # the next look fetches them whole
+        self._checklists[card_id] = change(self._checklists[card_id])
+        if card := self.find_card(card_id):
+            self._replace(replace(card, checklist=checklist_badge(self._checklists[card_id])))
 
     async def labels(self, board_id: str) -> list[Label]:
         """A board's labels, sorted by name."""
