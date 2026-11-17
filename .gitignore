@@ -221,3 +221,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# The original proof of concept; it holds a live Trello token
+main.py
