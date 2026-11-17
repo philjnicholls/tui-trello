@@ -15,6 +15,7 @@ from tui_trello.ui import render
 from tui_trello.ui.bidi import visual
 from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar
 from tui_trello.ui.widgets.card_view import CardView
+from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.spinner import Spinner
 
 
@@ -46,6 +47,7 @@ class BrowserScreen(BoardScreen):
     def compose(self) -> ComposeResult:
         with TopBar():
             yield Static(id="crumbs")
+            yield Bell()
             yield Spinner()
         yield Input(id="filter", placeholder=FILTER_HELP)
         with Horizontal(id="body"):

@@ -17,6 +17,7 @@ from tui_trello.models import (
     Comment,
     Label,
     Member,
+    Notification,
     WorkSnapshot,
 )
 
@@ -132,6 +133,18 @@ COMMENTS = [
 ]
 
 
+# (type, who, card name, hours ago, unread, comment or the list a card moved to), newest first
+NOTIFICATIONS = [
+    ("mentionedOnCard", "Grace Hopper", "Move cards between lists", 1, True,
+     "@ada can you check the picker remembers the last list?"),
+    ("addedToCard", "Alan Turing", "Token stored in plain text in config", 3, True, ""),
+    ("cardDueSoon", "", "Move cards between lists", 5, True, ""),
+    ("commentCard", "Grace Hopper", "Split backend from UI", 26, False, "Looks good to me."),
+    ("changeCard", "Alan Turing", "Show comments on card detail", 50, False, "Done"),
+    ("mentionedOnCard", "ليلى حداد", "إصلاح خطأ في نموذج التسجيل (عاجل)", 70, False, "@ada جربت في Chrome، والمشكلة ما زالت قائمة."),
+]
+
+
 class DemoBackend:
     def __init__(self) -> None:
         self._ids = (f"id{n}" for n in itertools.count(1))
@@ -145,6 +158,22 @@ class DemoBackend:
         ]:
             self._boards[board_id] = self._build(Board(board_id, name, f"https://trello.example/{board_id}", starred),
                                                  layout)
+        now = datetime.now(timezone.utc)  # "1h ago" should read so whatever the time of day
+        self._notifications = [self.notification(kind, who, card, now - timedelta(hours=hours), unread, extra)
+                               for kind, who, card, hours, unread, extra in NOTIFICATIONS]
+
+    def notification(self, kind: str, creator: str, card_name: str, date: datetime | None = None,
+                     unread: bool = True, extra: str = "") -> Notification:
+        """A notification about the card named `card_name`; `extra` is the comment, or the list it moved to."""
+        snapshot, card = next((s, c) for s in self._boards.values() for c in s.cards if c.name == card_name)
+        return Notification(next(self._ids), kind, unread, date or datetime.now(timezone.utc), creator, card.id,
+                            card.name, snapshot.board.id, snapshot.board.name,
+                            list_name=extra if kind == "changeCard" else "",
+                            text=extra if kind in ("commentCard", "mentionedOnCard") else "")
+
+    def push_notification(self, notification: Notification) -> None:
+        """Something happened on Trello: the next `notifications()` call returns it first (tests)."""
+        self._notifications.insert(0, notification)
 
     def _build(self, board: Board, layout: list) -> BoardSnapshot:
         rtl = board.id == "b-arabic"
@@ -278,6 +307,15 @@ class DemoBackend:
         checklist = Checklist(next(self._ids), name, pos=len(self._checklists.get(card_id, [])))
         self._checklists.setdefault(card_id, []).append(checklist)
         return checklist
+
+    async def notifications(self) -> list[Notification]:
+        return list(self._notifications)
+
+    async def mark_notifications_read(self, ids: list[str]) -> None:
+        self._notifications = [replace(n, unread=False) if n.id in ids else n for n in self._notifications]
+
+    async def mark_all_notifications_read(self) -> None:
+        self._notifications = [replace(n, unread=False) for n in self._notifications]
 
     async def aclose(self) -> None:
         pass

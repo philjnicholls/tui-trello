@@ -11,6 +11,7 @@ from tui_trello.models import Card
 from tui_trello.ui.bidi import visual
 from tui_trello.ui.screens.base import CardActionsScreen, TopBar
 from tui_trello.ui.widgets.card_view import CardView
+from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.spinner import Spinner
 
 
@@ -28,6 +29,7 @@ class CardScreen(CardActionsScreen):
     def compose(self) -> ComposeResult:
         with TopBar():
             yield Static(id="location")
+            yield Bell()
             yield Spinner()
         yield CardView()
         yield Footer()

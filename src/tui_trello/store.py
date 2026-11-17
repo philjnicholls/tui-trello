@@ -24,6 +24,7 @@ from tui_trello.models import (
     Comment,
     Label,
     Member,
+    Notification,
     WorkSnapshot,
     checklist_badge,
 )
@@ -39,7 +40,10 @@ class Store:
         self.work: WorkSnapshot | None = None
         self.board_changed: Signal[BoardSnapshot] = Signal(owner, "board_changed")
         self.work_changed: Signal[WorkSnapshot] = Signal(owner, "work_changed")
-        # What is being fetched or saved right now ("board", "work", "boards", "comments", "checklists", "save"), for spinners.
+        self.notifications: list[Notification] | None = None  # newest first
+        self.notifications_changed: Signal[list[Notification]] = Signal(owner, "notifications_changed")
+        # What is being fetched or saved right now ("board", "work", "boards", "comments", "checklists",
+        # "notifications", "save"), for spinners.
         self.busy: dict[str, int] = {}
         self.busy_changed: Signal[Store] = Signal(owner, "busy_changed")
         self._boards: list[Board] | None = None
@@ -82,6 +86,42 @@ class Store:
             self.work = await self.backend.my_work()
         self.work_changed.publish(self.work)
         return self.work
+
+    @property
+    def unread_count(self) -> int:
+        return sum(n.unread for n in self.notifications or ())
+
+    async def load_notifications(self) -> list[Notification]:
+        """Fetch the notifications; return the unread ones that arrived since the last fetch (none on the first)."""
+        async with self._busy("notifications"):
+            fetched = await self.backend.notifications()
+        seen = None if self.notifications is None else {n.id for n in self.notifications}
+        self.notifications = fetched
+        self.notifications_changed.publish(fetched)
+        return [n for n in fetched if n.unread and n.id not in seen] if seen is not None else []
+
+    async def mark_read(self, notification: Notification) -> None:
+        await self._mark_read([notification.id])
+
+    async def mark_card_read(self, card_id: str) -> None:
+        """Mark every unread notification about the card read, as opening the card on trello.com does."""
+        await self._mark_read([n.id for n in self.notifications or () if n.unread and n.card_id == card_id])
+
+    async def mark_all_read(self) -> None:
+        async with self._busy("save"):
+            await self.backend.mark_all_notifications_read()
+        self._patch_read(lambda n: True)
+
+    async def _mark_read(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        async with self._busy("save"):
+            await self.backend.mark_notifications_read(ids)
+        self._patch_read(lambda n: n.id in ids)
+
+    def _patch_read(self, which: Callable[[Notification], bool]) -> None:
+        self.notifications = [replace(n, unread=False) if which(n) else n for n in self.notifications or ()]
+        self.notifications_changed.publish(self.notifications)
 
     def contexts(self) -> list[CardContext]:
         return [context for context in (self.snapshot, self.work) if context is not None]

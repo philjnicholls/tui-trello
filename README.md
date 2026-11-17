@@ -39,8 +39,12 @@ Optional settings go in `~/.config/tui-trello/config.toml`:
 default_board = "tK1afjyM"   # open this board at start-up instead of choosing one
 
 [ui]
-layout = "browser"           # browser, triage or mywork
+layout = "browser"           # browser, triage, mywork or notifications
 transparent = true           # use the terminal's own background and colours (the default)
+
+[notifications]
+interval = 60                # check for new Trello notifications every minute; 0 turns it off
+desktop = true               # also raise a desktop notification for each new one
 ```
 
 `TRELLO_API_KEY` and `TRELLO_TOKEN` in the environment are only for the older token flow; leave them unset.
@@ -61,13 +65,32 @@ lists, quotes, code blocks and tables, in either direction.
 
 ## Views
 
-| key | view    | for                                                                             |
-| --- | ------- | ------------------------------------------------------------------------------- |
-| `1` | browser | one board as columns: lists, cards, preview                                     |
-| `2` | triage  | every card on the board as a sortable, filterable table                         |
-| `3` | my work | your cards on every board, grouped by due date (overdue, today, this week, ...) |
+| key | view          | for                                                                             |
+| --- | ------------- | ------------------------------------------------------------------------------- |
+| `1` | browser       | one board as columns: lists, cards, preview                                     |
+| `2` | triage        | every card on the board as a sortable, filterable table                         |
+| `3` | my work       | your cards on every board, grouped by due date (overdue, today, this week, ...) |
+| `4` | notifications | Trello's notifications (the bell): mentions, cards you were added to, comments, |
+|     |               | due dates                                                                       |
 
 ![my work](docs/screenshots/mywork.svg)
+
+## Notifications
+
+The app checks Trello for new notifications every minute while it runs. Each new one pops up in the corner and as a
+desktop notification, and the top bar of every view shows how many are unread. `4` lists them, newest first: enter
+opens the card (loading its board if need be) and marks the card's notifications read, `d` marks one read without
+opening it, `D` marks them all, `u` shows only the unread ones.
+
+Desktop notifications go through `notify-send` on a local Linux desktop. Elsewhere, over SSH for instance, the app
+asks the terminal to show one (OSC 777 or OSC 9); GNOME Terminal, Ptyxis, foot, iTerm2, WezTerm, Ghostty, kitty and
+Windows Terminal do, and other terminals ignore the request. Set `desktop = false` under `[notifications]` to keep
+only the in-app pop-ups.
+
+Marking notifications read needs a permission logins from before notifications were added don't have; if the app
+says so, run `tui-trello login` again.
+
+![notifications](docs/screenshots/notifications.svg)
 
 ## Keys
 
@@ -79,7 +102,7 @@ Vim-style throughout; `?` shows them all in the app.
 | `h` `l`                | out, in: back to the lists, into a column, open a card, back from a card           |
 | `gg` `G`               | first, last                                                                        |
 | `ctrl+d` `ctrl+u`      | half a page down, up                                                               |
-| `1` `2` `3`, `gt` `gT` | switch view                                                                        |
+| `1`-`4`, `gt` `gT`     | switch view                                                                        |
 | `/`                    | filter: `words #label @member list:name !overdue !due`; `esc` clears               |
 | `:`                    | command palette: jump to any board or card                                         |
 | `b`                    | pick a board                                                                       |
@@ -88,6 +111,7 @@ Vim-style throughout; `?` shows them all in the app.
 | `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |
 | `p`                    | my work: toggle the preview                                                        |
+| `d` `D` `u`            | notifications: mark read, mark all read, unread only                               |
 | `r`                    | reload                                                                             |
 | `ctrl+j` `ctrl+k`      | down, up in a picker (typing filters it)                                           |
 | `q` / `esc`            | quit / back                                                                        |

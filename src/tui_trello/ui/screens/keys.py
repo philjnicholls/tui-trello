@@ -18,7 +18,7 @@ KEYS = [
         ("ctrl+d ctrl+u", "half a page down, up"),
     ]),
     ("Views", [
-        ("1 2 3", "browser, triage, my work"),
+        ("1 2 3 4", "browser, triage, my work, notifications"),
         ("gt gT", "next, previous view"),
         ("b", "pick a board"),
         (":", "command palette: jump to any board or card"),
@@ -34,6 +34,12 @@ KEYS = [
         ("t", "labels: enter puts one on or takes it off; type a new name to create one"),
         ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
         ("o", "open in the web browser"),
+    ]),
+    ("Notifications", [
+        ("enter / l", "open the card and mark its notifications read"),
+        ("d", "mark read"),
+        ("D", "mark all read"),
+        ("u", "unread only / all"),
     ]),
     ("Pickers", [
         ("type", "filter"),

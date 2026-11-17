@@ -19,6 +19,7 @@ from tui_trello.ui import render
 from tui_trello.ui.bidi import fit
 from tui_trello.ui.screens.base import FILTER_HELP, ListScreen, TopBar
 from tui_trello.ui.widgets.card_view import CardView
+from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.spinner import Spinner
 
 GROUP_STYLES = {"Overdue": "bold red", "Today": "bold yellow", "Done": "bold green"}
@@ -53,6 +54,7 @@ class MyWorkScreen(ListScreen):
     def compose(self) -> ComposeResult:
         with TopBar():
             yield Static(id="status")
+            yield Bell()
             yield Spinner()
         yield Input(id="filter", placeholder=FILTER_HELP)
         with Horizontal(id="body"):

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from rich.text import Text
 
-from tui_trello.models import Card, CardContext, Label
+from tui_trello.models import Card, CardContext, Label, Notification
 from tui_trello.ui.bidi import BidiText, visual
 
 
@@ -64,3 +65,44 @@ def card_block(card: Card, context: CardContext, now: datetime | None = None) ->
         block.append("\n")
         block.append_text(meta)
     return BidiText(block)
+
+
+# What happened, by Trello notification type: "{who} <verb> <card>". The rest read as their type, split into words.
+NOTIFICATION_VERBS = {
+    "mentionedOnCard": "mentioned you on",
+    "commentCard": "commented on",
+    "addedToCard": "added you to",
+    "removedFromCard": "removed you from",
+    "changeCard": "moved",
+    "createdCard": "created",
+    "addedAttachmentToCard": "attached a file to",
+    "updateCheckItemStateOnCard": "ticked an item on",
+    "addedToBoard": "added you to the board",
+    "addAdminToBoard": "made you an admin of the board",
+    "invitedToBoard": "invited you to the board",
+    "closeBoard": "closed the board",
+    "addedToOrganization": "added you to a workspace",
+}
+
+
+def notification_summary(notification: Notification) -> str:
+    """One line in plain words: "Grace Hopper mentioned you on Move cards between lists"."""
+    n = notification
+    if n.type == "cardDueSoon":
+        return f"{n.card_name} is due soon"
+    verb = NOTIFICATION_VERBS.get(n.type) or re.sub(r"(?<!^)(?=[A-Z])", " ", n.type).lower()
+    subject = n.card_name if n.card_id else n.board_name
+    line = " ".join(part for part in (n.creator or "Trello", verb, subject) if part)
+    if n.type == "changeCard" and n.list_name:
+        line += f" to {n.list_name}"
+    return line
+
+
+def ago(date: datetime | None, now: datetime | None = None) -> str:
+    if date is None:
+        return ""
+    seconds = ((now or datetime.now(timezone.utc)) - date).total_seconds()
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit}"
+    return "now"

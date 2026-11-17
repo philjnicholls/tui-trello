@@ -22,12 +22,14 @@ from textual.widgets import Input, TextArea
 from tui_trello.backend import Backend, BackendError
 from tui_trello.config import Settings
 from tui_trello.store import Store
-from tui_trello.ui import keys_compat
+from tui_trello.models import Notification
+from tui_trello.ui import desktop, keys_compat, render
 from tui_trello.ui.commands import BoardCommands, CardCommands
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
 from tui_trello.ui.screens.keys import KeysScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
+from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import Choice, PickerScreen
 from tui_trello.ui.screens.triage import TriageScreen
 
@@ -74,13 +76,15 @@ class TrelloApp(App):
     }
     """
 
-    MODES = {"browser": BrowserScreen, "triage": TriageScreen, "mywork": MyWorkScreen}
+    MODES = {"browser": BrowserScreen, "triage": TriageScreen, "mywork": MyWorkScreen,
+             "notifications": NotificationsScreen}
     COMMANDS = App.COMMANDS | {BoardCommands, CardCommands}
 
     BINDINGS = [
         Binding("1", "switch_mode('browser')", "Browser"),
         Binding("2", "switch_mode('triage')", "Triage"),
         Binding("3", "switch_mode('mywork')", "My work"),
+        Binding("4", "switch_mode('notifications')", "Notifications"),
         Binding("b", "pick_board", "Boards"),
         Binding("r", "refresh", "Refresh"),
         Binding("j,down", "motion('down')", "Down", show=False),
@@ -104,8 +108,11 @@ class TrelloApp(App):
         await self.switch_mode(self.settings.layout)
         if self.settings.default_board:
             self.open_board(self.settings.default_board)
-        elif self.settings.layout != "mywork":
+        elif self.settings.layout in ("browser", "triage"):
             self.action_pick_board()
+        self.check_notifications()
+        if self.settings.notify_interval > 0:
+            self.set_interval(self.settings.notify_interval, self.check_notifications)
 
     async def on_unmount(self) -> None:
         await self.store.backend.aclose()
@@ -154,6 +161,37 @@ class TrelloApp(App):
         else:
             self.sub_title = snapshot.board.name
 
+    # -- notifications --------------------------------------------------------------------------------------------
+
+    @work(exclusive=True, group="notifications")
+    async def check_notifications(self, quiet: bool = True) -> None:
+        """Fetch the notifications and announce new unread ones. A failed background check is retried at the next
+        interval without a word (the network may be down); `quiet=False` reports it."""
+        try:
+            new = await self.store.load_notifications()
+        except BackendError as exc:
+            if not quiet:
+                self.notify(str(exc), title="Could not check notifications", severity="error")
+            return
+        self.announce(new)
+
+    def announce(self, new: list[Notification]) -> None:
+        """A toast for each new notification (one for the lot if there are many), and a desktop notification."""
+        if not new:
+            return
+        if len(new) > 3:
+            title, body = "Trello", f"{len(new)} new notifications (4 to see them)"
+            self.notify(body, title=title)
+        else:
+            for notification in reversed(new):  # oldest first, so the newest toast is at the bottom
+                self.notify(notification.text, title=render.notification_summary(notification), timeout=8,
+                            markup=False)  # comments are other people's text
+            title, body = render.notification_summary(new[0]), new[0].text
+            if len(new) > 1:
+                body = f"and {len(new) - 1} more"
+        if self.settings.desktop_notifications and not self.is_headless and self._driver is not None:
+            desktop.alert(title, body, self._driver.write)  # App.bell() writes to the driver the same way
+
     def open_card(self, card_id: str) -> None:
         self.push_screen(CardScreen(card_id))
 
@@ -177,3 +215,4 @@ class TrelloApp(App):
                 await self.store.load_work()
         except BackendError as exc:
             self.notify(str(exc), title="Could not refresh", severity="error")
+        self.check_notifications(quiet=False)

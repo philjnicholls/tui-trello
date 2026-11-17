@@ -39,7 +39,9 @@ from tui_trello.config import config_path
 OAUTH_CLIENT_ID = "OIKUn88OY9zECFEj1IKNyrAQaMFil0nG"
 OAUTH_AUTHORIZE_URL = "https://auth.atlassian.com/authorize"
 OAUTH_TOKEN_URL = "https://auth.atlassian.com/oauth/token"
-SCOPES = "read:member:trello read:board:trello write:board:trello offline_access"
+# write:member:trello is for marking notifications read: Trello refuses that with the board scopes alone, even
+# through POST /cards/{id}/markAssociatedNotificationsRead, which its API reference says they cover.
+SCOPES = "read:member:trello write:member:trello read:board:trello write:board:trello offline_access"
 
 # tui-trello's API key, for `login --token`. A key identifies the app, not the user, and is public by design.
 APP_API_KEY = "00000000000000000000000000000000"

@@ -10,6 +10,7 @@ from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
+from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import (
     ChecklistPickerScreen,
     LabelPickerScreen,
@@ -125,7 +126,7 @@ async def test_vim_keys(app) -> None:
         await pilot.press("g", "t")
         assert app.current_mode == "triage"
         await pilot.press("g", "T", "g", "T")
-        assert app.current_mode == "mywork"
+        assert app.current_mode == "notifications"
         await pilot.press("colon")
         assert app.screen.__class__.__name__ == "CommandPalette"
 
@@ -350,6 +351,59 @@ async def test_escape_closes_suggestions_first(app) -> None:
         assert app.screen is prompt and not prompt.suggested
         await pilot.press("escape")
         assert app.screen is not prompt
+
+
+async def test_notifications(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert app.store.unread_count == 3
+        assert "● 3 unread" in screen_lines(app)[0]  # the bell in the browser's top bar
+        await pilot.press("4")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, NotificationsScreen)
+        lines = "\n".join(screen_lines(app))
+        assert "Grace Hopper mentioned you on Move cards between lists" in lines
+        assert "Alan Turing moved Show comments on card detail to Done" in lines
+        await pilot.press("u")
+        assert len(screen.shown) == 3
+        await pilot.press("d")
+        await pilot.pause()
+        assert app.store.unread_count == 2
+        assert [n.type for n in screen.shown] == ["addedToCard", "cardDueSoon"]
+        await pilot.press("D")
+        await pilot.pause()
+        assert app.store.unread_count == 0
+        assert "●" not in "\n".join(screen_lines(app))  # no bell, no unread dots
+        assert "Nothing unread" in "\n".join(screen_lines(app))
+
+
+async def test_open_notification_loads_its_board(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("4")
+        await pilot.pause()
+        await pilot.press("G", "enter")  # the Arabic board's card, which isn't loaded
+        await pilot.pause()
+        assert isinstance(app.screen, CardScreen)
+        assert app.store.snapshot.board.id == "b-arabic"
+        assert app.screen.current_card().name == "إصلاح خطأ في نموذج التسجيل (عاجل)"
+
+
+async def test_new_notification_is_announced(app, backend) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        backend.push_notification(backend.notification("commentCard", "Alan Turing", "Offline cache for boards",
+                                                       extra="Should this use [bold]SQLite[/]?"))
+        app.check_notifications()
+        await pilot.pause()
+        [toast] = app._notifications
+        assert toast.title == "Alan Turing commented on Offline cache for boards"
+        assert toast.message == "Should this use [bold]SQLite[/]?" and not toast.markup
+        assert app.store.unread_count == 4
+        app.check_notifications()  # nothing new since: no second toast
+        await pilot.pause()
+        assert len(app._notifications) == 1
 
 
 def backgrounds(app) -> dict[str, int]:

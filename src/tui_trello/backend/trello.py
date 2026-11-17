@@ -19,6 +19,7 @@ from tui_trello.models import (
     Comment,
     Label,
     Member,
+    Notification,
     WorkSnapshot,
 )
 
@@ -42,6 +43,9 @@ class TrelloBackend:
         if response.status_code in (400, 401) and "invalid key" in response.text:
             raise BackendError("Trello doesn't recognise the app's API key; it may have been deleted or regenerated. "
                                "Set a current one as APP_API_KEY in tui_trello/auth.py (or api_key in the config).")
+        if response.status_code == 403 and "unauthorized notification" in response.text:
+            raise BackendError("Marking notifications read needs a permission your login doesn't have yet. "
+                               "Run `tui-trello login` again.")
         if response.status_code == 401 and "permission" in response.text:
             raise BackendError(f"You don't have access to that on Trello ({path}).")
         if response.status_code == 401:
@@ -139,6 +143,17 @@ class TrelloBackend:
 
     async def create_checklist(self, card_id: str, name: str) -> Checklist:
         return Checklist.from_api(await self._request("POST", f"/cards/{card_id}/checklists", name=name))
+
+    async def notifications(self) -> list[Notification]:
+        data = await self._request("GET", "/members/me/notifications", limit=50, fields="type,unread,date,data",
+                                   memberCreator_fields="fullName,username")
+        return [Notification.from_api(n) for n in data]  # newest first
+
+    async def mark_notifications_read(self, ids: list[str]) -> None:
+        await asyncio.gather(*(self._request("PUT", f"/notifications/{id_}", unread="false") for id_ in ids))
+
+    async def mark_all_notifications_read(self) -> None:
+        await self._request("POST", "/notifications/all/read")  # all of them, not only the 50 the app fetched
 
     async def aclose(self) -> None:
         await self._http.aclose()

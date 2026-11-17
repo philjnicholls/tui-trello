@@ -41,7 +41,7 @@ def _tmux(*args: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def _tmux_wrap(sequence: str) -> str:
+def tmux_wrap(sequence: str) -> str:
     """tmux passes a DCS `tmux;` sequence (with ESCs doubled) straight to the outer terminal."""
     return "\x1bPtmux;" + sequence.replace("\x1b", "\x1b\x1b") + "\x1b\\"
 
@@ -57,7 +57,7 @@ def explicit_mode(terminal: TextIO | None) -> Iterator[None]:
     if pane:
         if _tmux("show", "-Apv", "-t", pane, "allow-passthrough") not in ("on", "all"):
             enabled_passthrough = _tmux("set", "-p", "-t", pane, "allow-passthrough", "on") is not None
-    wrap = _tmux_wrap if pane else str
+    wrap = tmux_wrap if pane else str
     terminal.write(wrap(ENTER_EXPLICIT_MODE))
     terminal.flush()
     try:
@@ -221,13 +221,14 @@ def visual(text: Text | str, rtl: bool | None = None, console: Console | None = 
     return result
 
 
-def fit(text: Text | str, width: int, console: Console | None = None) -> Text:
-    """One line, cut to `width` cells at its logical end (with an ellipsis), reordered, padded to `width`."""
+def fit(text: Text | str, width: int, console: Console | None = None, rtl: bool | None = None) -> Text:
+    """One line, cut to `width` cells at its logical end (with an ellipsis), reordered, padded to `width`. `rtl`
+    is the base direction, as for :func:`visual`: by default the first strong character's."""
     if isinstance(text, str):
         text = Text(text)
     line = text.copy()
     line.truncate(width, overflow="ellipsis")
-    line = visual(line, console=console)
+    line = visual(line, rtl, console=console)
     line.pad_right(width - line.cell_len)
     return line
 

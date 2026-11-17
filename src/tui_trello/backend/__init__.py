@@ -17,6 +17,7 @@ from tui_trello.models import (
     Comment,
     Label,
     Member,
+    Notification,
     WorkSnapshot,
 )
 
@@ -55,5 +56,11 @@ class Backend(Protocol):
     async def add_check_item(self, checklist_id: str, name: str) -> CheckItem: ...
 
     async def create_checklist(self, card_id: str, name: str) -> Checklist: ...
+
+    async def notifications(self) -> list[Notification]: ...
+
+    async def mark_notifications_read(self, ids: list[str]) -> None: ...
+
+    async def mark_all_notifications_read(self) -> None: ...
 
     async def aclose(self) -> None: ...

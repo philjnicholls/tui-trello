@@ -5,12 +5,14 @@ src/tui_trello/
   cli.py              argument parsing; picks a backend; starts the app
   config.py           Settings from env vars and ~/.config/tui-trello/config.toml
   auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
-  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Checklist, CheckItem;
+  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Checklist, CheckItem,
+                      Notification;
                       BoardSnapshot (one board) and WorkSnapshot (my cards on every board), both satisfying
                       CardContext
   agenda.py           group cards by due date for My work
   query.py            the card filter language (#label @member list:x !overdue words)
-  store.py            app-wide state: open board, my work, caches; board_changed and work_changed signals
+  store.py            app-wide state: open board, my work, notifications, caches; board_changed, work_changed and
+                      notifications_changed signals
   backend/
     __init__.py       Backend protocol + BackendError
     trello.py         Trello REST API over async httpx
@@ -21,14 +23,17 @@ src/tui_trello/
     render.py         how a card/label/due date looks, shared by every view
     bidi.py           right-to-left text: reorder per field (a compact UAX #9), BidiText, fit()
     markdown.py       Markdown in descriptions and comments as styled, RTL-aware text
+    desktop.py        desktop notifications: notify-send, or the terminal's OSC 777 / OSC 9
     widgets/
       card_view.py    card header, description, checklists, comments
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
+      bell.py         the top-bar unread-notification count
     screens/
       base.py         CardActionsScreen (m, c, t, x, o), ListScreen (/ filter), BoardScreen (redraws on board_changed)
       browser.py      Miller columns: lists | cards | preview
       triage.py       sortable, filterable table of every card
       mywork.py       my cards on every board, grouped by due date, with preview
+      notifications.py  Trello's notifications; enter opens the card, d / D mark read
       card.py         full-screen card
       keys.py         the ? key reference
       picker.py       PickerScreen (fuzzy choose one), its label and checklist
@@ -59,6 +64,12 @@ scripts/screenshots.py
   card through `CardContext`, so the card view and the verbs work the same whichever snapshot the card came from.
 - **Loading**: every backend call in `Store` runs inside `_busy(name)`, which publishes `busy_changed`; the
   `Spinner` in each screen's `TopBar` turns and says what is in flight. That is the only loading indicator.
+- **Notifications**: `TrelloApp.check_notifications` runs at start-up, every `[notifications] interval` seconds and
+  on `r`. `Store.load_notifications` returns the unread ones it hadn't seen (none on the first load, so the backlog
+  isn't announced), and `TrelloApp.announce` toasts them and raises a desktop notification through `ui/desktop.py`.
+  Marking read (`PUT /notifications/{id}`, `POST /notifications/all/read`) needs the `write:member:trello` scope.
+  `POST /cards/{id}/markAssociatedNotificationsRead` does too, whatever the API reference says: with the board
+  scopes alone it answers 403 "unauthorized notification requested" once there is anything unread to mark.
 - **Right-to-left text**: anything that came from Trello goes through `ui/bidi.py` before it is drawn: `visual()`
   for short fields, `fit()` for fixed-width columns, `BidiText` for text that wraps. Never reorder a whole row:
   columns would swap sides. The CLI switches bidi terminals to explicit mode so they don't reorder screen lines.

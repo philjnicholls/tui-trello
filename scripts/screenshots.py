@@ -50,6 +50,8 @@ async def main() -> None:
         await shot("mywork", "escape", "escape", "3")
         await shot("mywork-nopreview", "p")
         await shot("help", "p", "question_mark")
+        await shot("notifications", "escape", "4")
+        await pilot.press("3")
         await shot("arabic-mywork", "escape")
         app.open_board("b-arabic")
         await shot("arabic-browser", "1", "h", "l", "j", "j")

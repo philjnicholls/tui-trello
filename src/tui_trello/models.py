@@ -180,6 +180,41 @@ class Checklist:
         return cls(id=data["id"], name=data.get("name") or "", items=tuple(items), pos=data.get("pos", 0))
 
 
+@dataclass(frozen=True)
+class Notification:
+    """One of the member's Trello notifications (the bell): someone mentioned them, added them to a card, ..."""
+
+    id: str
+    type: str  # Trello's: mentionedOnCard, commentCard, addedToCard, changeCard, cardDueSoon, ...
+    unread: bool
+    date: datetime | None
+    creator: str = ""  # who did it; empty for Trello's own (cardDueSoon)
+    card_id: str = ""  # empty for notifications not about a card (addedToBoard, ...)
+    card_name: str = ""
+    board_id: str = ""
+    board_name: str = ""
+    list_name: str = ""  # where a card was moved to (changeCard)
+    text: str = ""  # the comment, for commentCard and mentionedOnCard
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> Notification:
+        detail = data.get("data") or {}
+        card, board = detail.get("card") or {}, detail.get("board") or {}
+        return cls(
+            id=data["id"],
+            type=data.get("type") or "",
+            unread=data.get("unread", False),
+            date=_parse_date(data.get("date")),
+            creator=(data.get("memberCreator") or {}).get("fullName", ""),
+            card_id=card.get("id", ""),
+            card_name=card.get("name", ""),
+            board_id=board.get("id", ""),
+            board_name=board.get("name", ""),
+            list_name=(detail.get("listAfter") or {}).get("name", ""),
+            text=detail.get("text") or "",
+        )
+
+
 def checklist_badge(checklists: list[Checklist]) -> tuple[int, int]:
     """(checked, total) over a card's checklists, as `Card.checklist` holds it."""
     return sum(c.done for c in checklists), sum(len(c.items) for c in checklists)
