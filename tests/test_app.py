@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
 from tui_trello.ui.app import TrelloApp
@@ -404,6 +405,87 @@ async def test_new_notification_is_announced(app, backend) -> None:
         app.check_notifications()  # nothing new since: no second toast
         await pilot.pause()
         assert len(app._notifications) == 1
+
+
+async def test_comment_draft(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("c", *"half a thought", "escape")
+        await pilot.pause()
+        assert app.store.draft("comment", card.id).text == "half a thought"
+        assert "✐ draft  c: unsent comment" in "\n".join(screen_lines(app))  # in the preview
+        await pilot.press("c")
+        await pilot.pause()
+        assert app.screen.query_one("TextArea").text == "half a thought"
+        await pilot.press(*" finished", "enter")
+        await pilot.pause()
+        assert (await app.store.comments(card.id))[0].text == "half a thought finished"
+        assert app.store.draft("comment", card.id) is None
+        assert "✐ draft" not in "\n".join(screen_lines(app))
+
+
+async def test_draft_survives_a_restart(backend) -> None:
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("c", *"before the crash")
+        await pilot.pause(0.6)  # written a moment after typing stops, without closing the box
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l", "c")
+        await pilot.pause()
+        assert app.screen.query_one("TextArea").text == "before the crash"
+        assert app.store.draft("comment", card.id).text == "before the crash"
+
+
+class FailingComments(DemoBackend):
+    async def add_comment(self, card_id: str, text: str):
+        raise BackendError("Could not reach Trello.")
+
+
+async def test_failed_comment_is_kept() -> None:
+    app = TrelloApp(FailingComments(), Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("c", *"important", "enter")
+        await pilot.pause()
+        assert app.store.draft("comment", card.id).text == "important"
+
+
+async def test_edit_description(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")  # Inbox, first card: no description
+        card = app.screen.current_card()
+        await pilot.press("e", *"First line", "enter", *"second line")  # enter is a new line here
+        await pilot.press("escape")
+        await pilot.pause()
+        assert app.store.draft("desc", card.id).text == "First line\nsecond line"
+        assert app.store.find_card(card.id).desc == ""  # not saved yet
+        await pilot.press("e", "ctrl+s")
+        await pilot.pause()
+        assert app.store.find_card(card.id).desc == "First line\nsecond line"
+        assert app.store.draft("desc", card.id) is None
+        assert "second line" in "\n".join(screen_lines(app))
+
+
+async def test_description_changed_since_the_draft(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        app.store.save_draft("desc", card.id, "my version", base="what it said when I started")
+        await pilot.press("e")
+        await pilot.pause()
+        assert "has changed on Trello" in "\n".join(screen_lines(app))
+        assert app.screen.query_one("TextArea").text == "my version"
 
 
 def backgrounds(app) -> dict[str, int]:

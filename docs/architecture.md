@@ -4,6 +4,7 @@
 src/tui_trello/
   cli.py              argument parsing; picks a backend; starts the app
   config.py           Settings from env vars and ~/.config/tui-trello/config.toml
+  drafts.py           unsent comments and description edits, per card, in ~/.local/state/tui-trello/drafts.json
   auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
   models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Checklist, CheckItem,
                       Notification;
@@ -64,6 +65,10 @@ scripts/screenshots.py
   card through `CardContext`, so the card view and the verbs work the same whichever snapshot the card came from.
 - **Loading**: every backend call in `Store` runs inside `_busy(name)`, which publishes `busy_changed`; the
   `Spinner` in each screen's `TopBar` turns and says what is in flight. That is the only loading indicator.
+- **Drafts**: `TextPromptScreen` calls `on_change` a moment after typing stops and when it closes; the card
+  actions pass `Store.save_draft`, which writes `drafts.py`'s file and publishes `drafts_changed` (the `CardView`
+  marks the card). A draft is dropped once the backend call succeeds, so a failed send keeps it. Trello has no
+  drafts API, so they are local. Tests point `XDG_STATE_HOME` at a temporary directory (`tests/conftest.py`).
 - **Notifications**: `TrelloApp.check_notifications` runs at start-up, every `[notifications] interval` seconds and
   on `r`. `Store.load_notifications` returns the unread ones it hadn't seen (none on the first load, so the backlog
   isn't announced), and `TrelloApp.announce` toasts them and raises a desktop notification through `ui/desktop.py`.

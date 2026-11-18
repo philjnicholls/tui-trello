@@ -102,3 +102,15 @@ async def test_marking_read_without_the_scope() -> None:
         lambda request: httpx.Response(403, text="unauthorized notification requested.")))
     with pytest.raises(BackendError, match="tui-trello login"):
         await backend.mark_notifications_read(["n1"])
+
+
+async def test_set_description_sends_the_text_in_the_body() -> None:
+    import json
+
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    snapshot = await backend.board_snapshot("b1")
+    long = "word " * 3000  # too long for a URL
+    await backend.set_description(snapshot.cards[0], long)
+    assert requests[-1].method == "PUT" and "desc" not in requests[-1].url.params
+    assert json.loads(requests[-1].content) == {"desc": long}

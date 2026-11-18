@@ -262,6 +262,12 @@ class DemoBackend:
         self._comments.setdefault(card_id, []).insert(0, comment)
         return comment
 
+    async def set_description(self, card: Card, desc: str) -> Card:
+        snapshot, current = self._find(card.id)
+        updated = replace(current, desc=desc)
+        snapshot.replace_card(updated)
+        return updated
+
     async def labels(self, board_id: str) -> list[Label]:
         return list((await self.board_snapshot(board_id)).labels)
 

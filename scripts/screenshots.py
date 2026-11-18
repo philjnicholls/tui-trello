@@ -1,7 +1,11 @@
 """Regenerate docs/screenshots/*.svg from the demo backend: `python scripts/screenshots.py`."""
 
 import asyncio
+import os
+import tempfile
 from pathlib import Path
+
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()  # keep any drafts away from the real ones
 
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings

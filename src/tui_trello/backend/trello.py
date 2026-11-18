@@ -35,9 +35,10 @@ class TrelloBackend:
         """`auth` comes from `tui_trello.auth.request_auth`: `OAuth2Auth`, or `TokenAuth` after `login --token`."""
         self._http = httpx.AsyncClient(base_url=API_ROOT, auth=auth, timeout=20, transport=transport)
 
-    async def _request(self, method: str, path: str, **params: Any) -> Any:
+    async def _request(self, method: str, path: str, *, body: dict[str, Any] | None = None, **params: Any) -> Any:
+        """`params` go in the query string; `body` is sent as JSON, for text too long for a URL."""
         try:
-            response = await self._http.request(method, path, params=params)
+            response = await self._http.request(method, path, params=params, json=body)
         except httpx.HTTPError as exc:
             raise BackendError(f"Could not reach Trello: {exc}") from exc
         if response.status_code in (400, 401) and "invalid key" in response.text:
@@ -104,6 +105,10 @@ class TrelloBackend:
 
     async def add_comment(self, card_id: str, text: str) -> Comment:
         return Comment.from_api(await self._request("POST", f"/cards/{card_id}/actions/comments", text=text))
+
+    async def set_description(self, card: Card, desc: str) -> Card:
+        data = await self._request("PUT", f"/cards/{card.id}", body={"desc": desc}, fields=CARD_FIELDS)
+        return Card.from_api(data)
 
     async def labels(self, board_id: str) -> list[Label]:
         data = await self._request("GET", f"/boards/{board_id}/labels", fields="name,color")

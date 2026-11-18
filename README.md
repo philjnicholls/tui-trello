@@ -75,6 +75,16 @@ lists, quotes, code blocks and tables, in either direction.
 
 ![my work](docs/screenshots/mywork.svg)
 
+## Drafts
+
+A comment you haven't sent or a description edit you haven't saved is kept as a draft: close the box with `esc`, quit,
+or lose the connection, and the text is there the next time you press `c` or `e` on that card. The card's details show
+`✐ draft` while it has one. Sending or saving drops the draft; so does emptying the box. A failed send keeps it.
+
+Drafts live in `~/.local/state/tui-trello/drafts.json` (`$XDG_STATE_HOME`), readable only by you, and only
+tui-trello sees them: Trello's API has no drafts, so they don't appear on trello.com or in Trello's apps. If someone
+changes a description on Trello while you have a draft of it, the editor says so before you save over it.
+
 ## Notifications
 
 The app checks Trello for new notifications every minute while it runs. Each new one pops up in the corner and as a
@@ -107,6 +117,7 @@ Vim-style throughout; `?` shows them all in the app.
 | `:`                    | command palette: jump to any board or card                                         |
 | `b`                    | pick a board                                                                       |
 | `m` `c` `o`            | move, comment (enter sends, alt+enter new line, `@` mentions), open in the browser |
+| `e`                    | edit the description (enter new line, ctrl+s saves)                                |
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |
 | `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |

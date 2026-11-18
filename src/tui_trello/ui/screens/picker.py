@@ -1,4 +1,5 @@
-"""Reusable modals: a fuzzy picker (boards, lists, labels, checklist items, ...) and a text prompt (comments, ...)."""
+"""Reusable modals: a fuzzy picker (boards, lists, labels, checklist items, ...) and a text prompt (comments,
+descriptions)."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from textual.containers import Vertical
 from textual.content import Content
 from textual.fuzzy import Matcher
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Input, Label, OptionList, TextArea
 from textual.widgets.option_list import Option
 
@@ -157,7 +159,14 @@ class PickerScreen(ModalScreen[T | None]):
 
 
 class TextPromptScreen(ModalScreen[str | None]):
-    """A text box. Enter saves, alt+enter (or ctrl+j) starts a new line, Esc cancels.
+    """A text box. Enter saves, alt+enter (or ctrl+j) starts a new line, Esc cancels. Dismisses with the text
+    (stripped; None if blank), or None if cancelled.
+
+    `multiline` makes it an editor for longer text: bigger, enter starts a new line, ctrl+s saves, and it dismisses
+    with the text as typed, blank included (clearing a description is an edit), None only if cancelled.
+
+    `text` is what the box starts with (a draft). `on_change` is called with the text a moment after typing stops,
+    and when the box closes either way, so the caller can keep a draft.
 
     With `mentions` (a coroutine function returning members), typing "@" shows matching members below the box:
     tab or enter puts in the highlighted one's @username, up and down choose, Esc hides the list.
@@ -171,22 +180,35 @@ class TextPromptScreen(ModalScreen[str | None]):
     TextPromptScreen .title { text-style: bold; color: $accent; }
     TextPromptScreen .hint { color: $text-muted; }
     TextPromptScreen TextArea { height: 10; }
+    TextPromptScreen.editor > Vertical { width: 100; }
+    TextPromptScreen.editor TextArea { height: 70vh; }
+    TextPromptScreen .notice { color: $warning; }
     TextPromptScreen #mentions { display: none; height: auto; max-height: 8; border: none; background: $boost; }
     TextPromptScreen #mentions.visible { display: block; }
     """
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", priority=True),
-        Binding("enter,ctrl+s", "save", "Save", priority=True),
+        Binding("enter", "enter", "Save", priority=True),
+        Binding("ctrl+s", "save", "Save", show=False, priority=True),
         Binding("tab", "accept_mention", "Mention", show=False, priority=True),
         Binding("down", "mention_cursor(1)", show=False, priority=True),
         Binding("up", "mention_cursor(-1)", show=False, priority=True),
         Binding("alt+enter,ctrl+j", "newline", "New line", priority=True),  # alt+enter needs ui/keys_compat.py
     ]
 
-    def __init__(self, title: str, mentions: Callable[[], Awaitable[list[Member]]] | None = None) -> None:
-        super().__init__()
+    DRAFT_DELAY = 0.4  # seconds after the last key before `on_change`
+
+    def __init__(self, title: str, mentions: Callable[[], Awaitable[list[Member]]] | None = None, *,
+                 text: str = "", multiline: bool = False, on_change: Callable[[str], None] | None = None,
+                 notice: str = "") -> None:
+        super().__init__(classes="editor" if multiline else "")
         self.title_text = title
+        self.initial_text = text
+        self.multiline = multiline
+        self.on_change = on_change
+        self.notice = notice
+        self.change_timer: Timer | None = None
         self.mentions_loader = mentions
         self.members: list[Member] | None = None
         self.suggested: list[Member] = []
@@ -194,10 +216,21 @@ class TextPromptScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(self.title_text, classes="title")
-            yield TextArea()
+            if self.notice:
+                yield Label(self.notice, classes="notice")
+            yield TextArea(self.initial_text)
             yield OptionList(id="mentions")
-            hint = "enter send · alt+enter new line · esc cancel"
+            if self.multiline:
+                hint = "ctrl+s save · enter new line · esc close"
+            else:
+                hint = "enter send · alt+enter new line · esc close"
+            if self.on_change:
+                hint += " (keeps a draft)"
             yield Label(f"{hint} · @ mention" if self.mentions_loader else hint, classes="hint")
+
+    def on_mount(self) -> None:
+        area = self.query_one(TextArea)
+        area.move_cursor(area.document.end)
 
     @property
     def suggesting(self) -> bool:
@@ -213,6 +246,20 @@ class TextPromptScreen(ModalScreen[str | None]):
     @on(TextArea.SelectionChanged)
     def on_text(self) -> None:
         self.suggest()
+
+    @on(TextArea.Changed)
+    def on_edit(self) -> None:
+        if self.on_change:
+            if self.change_timer:
+                self.change_timer.stop()
+            self.change_timer = self.set_timer(self.DRAFT_DELAY, self.report_change)
+
+    def report_change(self) -> None:
+        if self.change_timer:
+            self.change_timer.stop()
+            self.change_timer = None
+        if self.on_change:
+            self.on_change(self.query_one(TextArea).text)
 
     @work(exclusive=True, group="mentions")
     async def suggest(self) -> None:
@@ -264,14 +311,24 @@ class TextPromptScreen(ModalScreen[str | None]):
         if self.suggesting:
             self.show_suggestions([])
         else:
+            self.report_change()
             self.dismiss(None)
+
+    def action_enter(self) -> None:
+        if self.suggesting:
+            self.action_accept_mention()
+        elif self.multiline:
+            self.action_newline()
+        else:
+            self.action_save()
 
     def action_save(self) -> None:
         if self.suggesting:
             self.action_accept_mention()
             return
-        text = self.query_one(TextArea).text.strip()
-        self.dismiss(text or None)
+        self.report_change()  # the caller drops the draft once the text is safely on Trello
+        text = self.query_one(TextArea).text
+        self.dismiss(text if self.multiline else text.strip() or None)
 
     def action_newline(self) -> None:
         self.query_one(TextArea).insert("\n")

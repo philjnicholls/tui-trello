@@ -31,6 +31,8 @@ KEYS = [
         ("enter / l", "open"),
         ("m", "move to another list"),
         ("c", "comment: enter sends, alt+enter new line, @ mentions someone (tab or enter picks)"),
+        ("e", "edit the description: enter new line, ctrl+s saves"),
+        ("", "esc closes either and keeps what you wrote as a draft; empty the box to drop it"),
         ("t", "labels: enter puts one on or takes it off; type a new name to create one"),
         ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
         ("o", "open in the web browser"),

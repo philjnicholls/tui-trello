@@ -30,20 +30,24 @@ def main(argv: list[str] | None = None) -> None:
     if args.layout:
         settings.layout = args.layout
 
+    from tui_trello.drafts import Drafts, drafts_path
+
     if args.demo:
         from tui_trello.backend.demo import DemoBackend
 
         backend = DemoBackend()
         settings.default_board = settings.default_board if args.board else "b-product"
+        drafts = Drafts(drafts_path().with_name("demo-drafts.json"))  # not mixed in with real cards' drafts
     else:
         backend = trello_backend(settings)
+        drafts = Drafts()
 
     from tui_trello.ui.app import TrelloApp
     from tui_trello.ui.bidi import explicit_mode
 
     # The app lays out RTL text itself; stop bidi terminals reordering whole screen lines (see ui/bidi.py).
     with explicit_mode(sys.__stdout__ if sys.__stdout__ and sys.__stdout__.isatty() else None):
-        TrelloApp(backend, settings).run()
+        TrelloApp(backend, settings, drafts).run()
 
 
 def api_key(settings: Settings) -> str:

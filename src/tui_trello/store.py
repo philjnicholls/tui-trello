@@ -14,6 +14,7 @@ from textual.dom import DOMNode
 from textual.signal import Signal
 
 from tui_trello.backend import Backend
+from tui_trello.drafts import Draft, Drafts, Kind
 from tui_trello.models import (
     Board,
     BoardSnapshot,
@@ -34,8 +35,10 @@ LABEL_COLOURS = ("green", "yellow", "orange", "red", "purple", "blue", "sky", "l
 
 
 class Store:
-    def __init__(self, owner: DOMNode, backend: Backend) -> None:
+    def __init__(self, owner: DOMNode, backend: Backend, drafts: Drafts | None = None) -> None:
         self.backend = backend
+        self.drafts = drafts or Drafts()
+        self.drafts_changed: Signal[str] = Signal(owner, "drafts_changed")  # with the card's id
         self.snapshot: BoardSnapshot | None = None
         self.work: WorkSnapshot | None = None
         self.board_changed: Signal[BoardSnapshot] = Signal(owner, "board_changed")
@@ -153,6 +156,20 @@ class Store:
         if card := self.find_card(card_id):
             self._replace(replace(card, comment_count=card.comment_count + 1))
         return comment
+
+    async def set_description(self, card: Card, desc: str) -> Card:
+        async with self._busy("save"):
+            updated = await self.backend.set_description(card, desc)
+        self._replace(updated)
+        return updated
+
+    def draft(self, kind: Kind, card_id: str) -> Draft | None:
+        return self.drafts.get(kind, card_id)
+
+    def save_draft(self, kind: Kind, card_id: str, text: str, base: str = "") -> None:
+        """Keep unsent text (blank text drops the draft) and tell the views, which mark cards with a draft."""
+        if self.drafts.set(kind, card_id, text, base):
+            self.drafts_changed.publish(card_id)
 
     def has_checklists(self, card_id: str) -> bool:
         """Whether the card's checklists are loaded and there is at least one (perhaps with no items yet)."""

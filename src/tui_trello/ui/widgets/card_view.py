@@ -31,6 +31,14 @@ class CardView(VerticalScroll):
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
         self.card: Card | None = None
+        self.context: CardContext | None = None
+
+    def on_mount(self) -> None:
+        self.app.store.drafts_changed.subscribe(self, self.on_draft_changed)
+
+    def on_draft_changed(self, card_id: str) -> None:
+        if self.card and self.context and self.card.id == card_id:
+            self.show_meta(self.card, self.context)
 
     def compose(self) -> ComposeResult:
         yield Static(id="card-title")
@@ -43,7 +51,7 @@ class CardView(VerticalScroll):
         yield Static(id="card-comments")
 
     def show(self, card: Card | None, context: CardContext) -> None:
-        self.card = card
+        self.card, self.context = card, context
         self.scroll_home(animate=False)
         if card is None:
             self.query_one("#card-title", Static).update(Text("No card selected", style="dim"))
@@ -53,6 +61,16 @@ class CardView(VerticalScroll):
             self.query_one("#card-comments", Static).update("")
             return
         self.query_one("#card-title", Static).update(BidiText(card.name))
+        self.show_meta(card, context)
+        self.show_description(card.desc)
+        self.query_one("#card-comments", Static).update("")  # the top bar's spinner shows comments loading
+        self.load_comments(card)
+        if card.checklist[1] or self.app.store.has_checklists(card.id):
+            self.load_checklists(card)
+        else:
+            self.show_checklists([])
+
+    def show_meta(self, card: Card, context: CardContext) -> None:
         meta = Text.assemble(
             ("in ", "dim"), visual(Text(context.location(card), style="bold")), "  ",
             render.badges(card), "\n",
@@ -62,14 +80,10 @@ class CardView(VerticalScroll):
             meta.append_text(Text.assemble(("👤 ", "dim"), Text(", ", style="cyan").join(
                 visual(Text(name, style="cyan")) for name in names), "\n"))
         meta.append_text(render.label_chips(card.labels))
+        drafts = {"comment": "c: unsent comment", "desc": "e: unsaved description"}
+        for kind in self.app.store.drafts.kinds(card.id):
+            meta.append_text(Text.assemble("\n", ("✐ draft", "bold yellow"), (f"  {drafts[kind]}", "yellow")))
         self.query_one("#card-meta", Static).update(meta)
-        self.show_description(card.desc)
-        self.query_one("#card-comments", Static).update("")  # the top bar's spinner shows comments loading
-        self.load_comments(card)
-        if card.checklist[1] or self.app.store.has_checklists(card.id):
-            self.load_checklists(card)
-        else:
-            self.show_checklists([])
 
     def show_description(self, desc: str) -> None:
         self.query_one("#card-desc", Static).update(

@@ -1,6 +1,7 @@
 """Behaviour shared by the screens.
 
-- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, labels, checklist, open in browser). A new card feature
+- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist, open in
+  browser). A new card feature
   (archive, assign, label, due date, ...) is added here once, as a binding plus an action, and works in every view.
   Subclasses only say which card is current.
 - :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`.
@@ -52,6 +53,7 @@ class CardActionsScreen(Screen):
     BINDINGS = [
         Binding("m", "move_card", "Move"),
         Binding("c", "comment", "Comment"),
+        Binding("e", "edit_description", "Description"),
         Binding("t", "labels", "Labels"),
         Binding("x", "checklist", "Checklist"),
         Binding("o", "open_in_browser", "Open in browser", show=False),
@@ -89,17 +91,55 @@ class CardActionsScreen(Screen):
         card = self.current_card()
         if not card:
             return
-        board_id = card.board_id
-        text = await self.app.push_screen_wait(
-            TextPromptScreen(f"Comment on “{card.name}”", mentions=lambda: self.app.store.members(board_id)))
+        store, board_id = self.app.store, card.board_id
+        draft = store.draft("comment", card.id)
+        text = await self.app.push_screen_wait(TextPromptScreen(
+            f"Comment on “{card.name}”", mentions=lambda: store.members(board_id),
+            text=draft.text if draft else "", notice="Your unsent comment" if draft else "",
+            on_change=lambda text: store.save_draft("comment", card.id, text)))
         if not text:
             return
         try:
-            await self.app.store.add_comment(card.id, text)
+            await store.add_comment(card.id, text)
         except BackendError as exc:
-            self.notify(str(exc), severity="error")
+            self.notify(f"{exc} The comment is kept as a draft: c to try again.", severity="error")
         else:
+            store.save_draft("comment", card.id, "")
             self.notify("Comment added")
+
+    @work
+    async def action_edit_description(self) -> None:
+        card = self.current_card()
+        if not card:
+            return
+        store, board_id = self.app.store, card.board_id
+        draft = store.draft("desc", card.id)
+        base = draft.base if draft else card.desc  # the description the edit started from
+        notice = ""
+        if draft:
+            notice = "Your unsaved edit"
+            if draft.base != card.desc:
+                notice += ". The description has changed on Trello since you started it; saving replaces that."
+
+        def keep(text: str) -> None:
+            store.save_draft("desc", card.id, "" if text == base else text, base=base)
+
+        desc = await self.app.push_screen_wait(TextPromptScreen(
+            f"Description of “{card.name}”", mentions=lambda: store.members(board_id), multiline=True,
+            text=draft.text if draft else card.desc, notice=notice, on_change=keep))
+        current = store.find_card(card.id) or card
+        if desc is None:
+            return
+        if desc == current.desc:
+            store.save_draft("desc", card.id, "")
+            return
+        try:
+            await store.set_description(current, desc)
+        except BackendError as exc:
+            self.notify(f"{exc} The edit is kept as a draft: e to try again.", severity="error")
+        else:
+            store.save_draft("desc", card.id, "")
+            self.notify("Description saved")
 
     def action_labels(self) -> None:
         if card := self.current_card():
