@@ -430,6 +430,16 @@ async def test_transparent_background(app, keys) -> None:
         assert painted > 0  # the cursor still shows
 
 
+async def test_text_cursor_shows_on_a_transparent_background(app) -> None:
+    """The cursor used to come out reversed theme colours, dark on a dark terminal: it must reverse the terminal's."""
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l", "c", *"hi")
+        await pilot.pause()
+        cursor = app.screen.query_one("TextArea").get_component_rich_style("text-area--cursor")
+        assert cursor.reverse and cursor.color.is_default and cursor.bgcolor.is_default
+
+
 async def test_opaque_background(backend) -> None:
     app = TrelloApp(backend, Settings(default_board="b-product", transparent=False))
     async with app.run_test(size=(120, 30)) as pilot:

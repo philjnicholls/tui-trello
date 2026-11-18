@@ -73,6 +73,14 @@ class TrelloApp(App):
         TextArea > .text-area--cursor-line {
             background: transparent;
         }
+        /* Textual's :ansi rule reverses the cursor and its :dark rule then gives it the theme's light-on-dark
+           colours, so the reversed cursor came out dark on a dark terminal: invisible. Reverse the terminal's own
+           colours instead: a block in its text colour, whatever its theme. */
+        TextArea > .text-area--cursor, Input > .input--cursor {
+            color: ansi_default;
+            background: ansi_default;
+            text-style: reverse;
+        }
     }
     """
 
