@@ -23,7 +23,7 @@ src/tui_trello/
     commands.py       ctrl+p providers: boards, cards
     render.py         how a card/label/due date looks, shared by every view
     bidi.py           right-to-left text: reorder per field (a compact UAX #9), BidiText, fit()
-    markdown.py       Markdown in descriptions and comments as styled, RTL-aware text
+    markdown.py       Markdown in descriptions, comments and checklists as styled, RTL-aware text
     desktop.py        desktop notifications: notify-send, or the terminal's OSC 777 / OSC 9
     widgets/
       card_view.py    card header, description, checklists, comments

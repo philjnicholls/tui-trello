@@ -120,8 +120,8 @@ PUT /1/cards/{id}?idList=...&pos=top
 ```
 """
 
-CHECK_ITEMS = ["Write the tests", "Update the README", "Try it on a real board", "Ask for a review",
-               "Check the Arabic board", "Take new screenshots"]
+CHECK_ITEMS = ["Write the tests", "Update the `README.md`", "Try it on a real board", "Ask for a review",
+               "Check the Arabic board", "Take **new** screenshots"]
 ARABIC_CHECK_ITEMS = ["الاختبار في Chrome", "الاختبار على الجوال", "تحديث التوثيق", "طلب مراجعة الكود"]
 
 COMMENTS = [

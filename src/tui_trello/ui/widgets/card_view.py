@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from rich.console import Group, RenderableType
+from rich.style import Style
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
@@ -95,11 +96,12 @@ class CardView(VerticalScroll):
         for checklist in checklists:
             done = checklist.done == len(checklist.items) and checklist.items
             parts.append(BidiText(Text.assemble(
-                Text(checklist.name, style="bold"), "  ",
+                markdown.inline(checklist.name, Style(bold=True)), "  ",
                 (f"{checklist.done}/{len(checklist.items)}", "green" if done else "dim"))))
             for item in checklist.items:
-                parts.append(BidiText(Text.assemble(("☑ ", "green"), Text(item.name, style="dim strike"))
-                                      if item.checked else Text.assemble(("☐ ", "dim"), item.name)))
+                parts.append(BidiText(
+                    Text.assemble(("☑ ", "green"), markdown.inline(item.name, Style(dim=True, strike=True)))
+                    if item.checked else Text.assemble(("☐ ", "dim"), markdown.inline(item.name))))
             parts.append(Text(""))
         self.query_one("#card-checklists", Static).update(Group(*parts[:-1]))
 

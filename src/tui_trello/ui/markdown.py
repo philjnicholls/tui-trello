@@ -6,6 +6,7 @@ styling. List markers and quote bars hang outside the text, and sit on the right
 
 Supported: paragraphs and line breaks, **bold**, *italic*, ~~strikethrough~~, `code`, links (and bare URLs), @mentions,
 headings, bullet and numbered lists (nested), block quotes, code blocks, rules, tables and images (shown by name).
+`inline()` renders just the inline part, for one-line text such as checklist items.
 """
 
 from __future__ import annotations
@@ -43,6 +44,13 @@ def render(source: str) -> RenderableType:
     """The renderable for a Markdown description or comment."""
     root = SyntaxTreeNode(PARSER.parse(source))
     return Group(*_spaced(_blocks(root.children, depth=0)))
+
+
+def inline(source: str, style: Style = Style()) -> Text:
+    """The styled text for one line of Markdown (a checklist or its item): code, emphasis, links and mentions, with
+    no blocks, so "# 1" or "- x" stay as written."""
+    root = SyntaxTreeNode(PARSER.parseInline(source))
+    return _inline(root.children[0], style) if root.children else Text(source, style)
 
 
 def _spaced(blocks: list[RenderableType]) -> list[RenderableType]:

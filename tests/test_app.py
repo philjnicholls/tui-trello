@@ -271,10 +271,11 @@ async def test_checklist(app) -> None:
         assert card.checklist == (1, 4)
         await pilot.press("enter")
         await pilot.pause()
-        assert "☐ Update the README" in "\n".join(screen_lines(app))
+        assert "☐ Update the README.md" in "\n".join(screen_lines(app))
         await pilot.press("x")
         await pilot.pause()
         assert isinstance(app.screen, ChecklistPickerScreen)
+        assert app.screen.choices[1].label == "Update the README.md"  # matched as shown, without the backticks
         await pilot.press("down", "enter")  # tick the second item
         await pilot.pause()
         assert app.store.find_card(card.id).checklist == (2, 4)

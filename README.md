@@ -59,7 +59,8 @@ runs, since they reorder whole screen lines, across panes. Other terminals need 
 board (`b`, then "مشروع").
 
 Descriptions and comments show their Markdown styled: bold, italic, strikethrough, `code`, links, @mentions, headings,
-lists, quotes, code blocks and tables, in either direction.
+lists, quotes, code blocks and tables, in either direction. Checklist items get the inline part: bold, italic,
+strikethrough, `code`, links and @mentions.
 
 ![arabic](docs/screenshots/arabic-browser.svg)
 

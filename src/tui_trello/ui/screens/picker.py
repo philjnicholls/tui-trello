@@ -22,6 +22,7 @@ from textual.widgets.option_list import Option
 from tui_trello.backend import BackendError
 from tui_trello.mentions import candidates, typing_mention
 from tui_trello.models import Checklist, Member
+from tui_trello.ui import markdown
 from tui_trello.ui.bidi import BidiText, has_rtl
 
 T = TypeVar("T")
@@ -33,6 +34,7 @@ class Choice(Generic[T]):
     value: T
     hint: str = ""  # dim text after the label
     marker: Text | None = None  # shown before the label, e.g. a label's colour
+    text: Text | None = None  # the label styled, e.g. from Markdown; its plain text must be the label
 
 
 class PickerScreen(ModalScreen[T | None]):
@@ -116,10 +118,10 @@ class PickerScreen(ModalScreen[T | None]):
             matcher = Matcher(query)
             scored = [(matcher.match(c.label), c) for c in self.choices]
             matches = [c for score, c in sorted(scored, key=lambda sc: -sc[0]) if score > 0]
-            prompts = [matcher.highlight(c.label) for c in matches]
+            prompts = [self.highlight(matcher, c) for c in matches]
         else:
             matches = self.choices
-            prompts = [c.label for c in matches]
+            prompts = [Content.from_rich_text(c.text) if c.text else c.label for c in matches]
         extras = self.extras(query)
         self.shown = matches + extras
         options.set_options([self.option(p, c) for p, c in zip(prompts, matches)]
@@ -127,12 +129,22 @@ class PickerScreen(ModalScreen[T | None]):
         options.highlighted = 0 if self.shown else None
 
     @staticmethod
+    def highlight(matcher: Matcher, choice: Choice) -> Content:
+        """The label, styled if the choice has `text`, with the matched letters highlighted."""
+        content = Content.from_rich_text(choice.text) if choice.text else Content(choice.label)
+        _, offsets = matcher.fuzzy_search.match(matcher.query, choice.label)
+        for offset in offsets:
+            if not choice.label[offset].isspace():
+                content = content.stylize(matcher.match_style, offset, offset + 1)
+        return content
+
+    @staticmethod
     def option(prompt: str | Content, choice: Choice) -> Option:
         """`prompt` is the label, or the label with the matched letters highlighted."""
         marker = choice.marker or Text("")
         hint = Text(f"  {choice.hint}", style="dim") if choice.hint else Text("")
         if has_rtl(choice.label):  # fuzzy highlighting is in logical order; show the reordered name instead
-            return Option(BidiText(Text.assemble(marker, choice.label, hint), align_rtl=False))
+            return Option(BidiText(Text.assemble(marker, choice.text or choice.label, hint), align_rtl=False))
         return Option(Content.assemble(Content.from_rich_text(marker), prompt, Content.from_rich_text(hint)))
 
     def action_cursor(self, step: int) -> None:
@@ -406,15 +418,17 @@ class ChecklistPickerScreen(PickerScreen):
             self.query_one(".title", Label).update(Text.assemble("Checklist for “", visual(card.name), "”"))
         self.checklists = await store.checklists(self.card_id)
         several = len(self.checklists) > 1
-        return [
-            Choice(item.name, ("toggle", item), checklist.name if several else "",
-                   Text("☑ ", style="green") if item.checked else Text("☐ ", style="dim"))
-            for checklist in self.checklists for item in checklist.items
-        ]
+        choices = []
+        for checklist in self.checklists:
+            for item in checklist.items:
+                text = markdown.inline(item.name)
+                choices.append(Choice(text.plain, ("toggle", item), checklist.name if several else "",
+                                      Text("☑ ", style="green") if item.checked else Text("☐ ", style="dim"), text))
+        return choices
 
     def extras(self, query: str) -> list[Choice]:
         name = query.strip()
-        if not name or any(c.label.lower() == name.lower() for c in self.choices):
+        if not name or any(name.lower() in (c.label.lower(), c.value[1].name.lower()) for c in self.choices):
             return []
         plus = Text("+ ", style="bold green")
         return [Choice(f"add “{name}” to {checklist.name}", ("add", checklist.id, name), marker=plus)

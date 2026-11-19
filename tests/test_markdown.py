@@ -2,7 +2,7 @@ import io
 
 from rich.console import Console
 
-from tui_trello.ui.markdown import render
+from tui_trello.ui.markdown import inline, render
 
 
 def lines(source: str, width: int = 40) -> list[str]:
@@ -27,6 +27,14 @@ def test_inline_styles() -> None:
     assert "underline" in found["site"] and "https://example.com" in found["site"]
     assert "cyan" in found["@ada"]
     assert not any("cyan" in style for text, style in found.items() if "example.com" in text and "@" in text)
+
+
+def test_inline_only() -> None:
+    text = inline("Run `make` on **all** of [it](https://example.com)")
+    assert text.plain == "Run make on all of it"
+    spans = {text.plain[span.start:span.end]: str(span.style) for span in text.spans}
+    assert "magenta" in spans["make"] and "bold" in spans["all"] and "underline" in spans["it"]
+    assert inline("# 1 - two").plain == "# 1 - two"  # not a heading or a list
 
 
 def test_bare_urls_are_links() -> None:
