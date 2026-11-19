@@ -89,7 +89,8 @@ changes a description on Trello while you have a draft of it, the editor says so
 ## Notifications
 
 The app checks Trello for new notifications every minute while it runs. Each new one pops up in the corner and as a
-desktop notification, and the top bar of every view shows how many are unread. `4` lists them, newest first: enter
+desktop notification, and the top bar of every view shows how many are unread. Boards in the picker, lists and cards
+show a `●` with the number of unread notifications about them. `4` lists them, newest first: enter
 opens the card (loading its board if need be) and marks the card's notifications read, `d` marks one read without
 opening it, `D` marks them all, `u` shows only the unread ones.
 

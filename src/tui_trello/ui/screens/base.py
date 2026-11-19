@@ -211,6 +211,7 @@ class BoardScreen(ListScreen):
 
     def on_mount(self) -> None:
         self.app.store.board_changed.subscribe(self, lambda _: self.redraw())
+        self.app.store.notifications_changed.subscribe(self, lambda _: self.redraw())
         if self.snapshot:
             self.redraw()
 

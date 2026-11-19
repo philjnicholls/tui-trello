@@ -56,7 +56,7 @@ class TriageScreen(BoardScreen):
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
-        for label, width in [("List", 12), ("Card", None), ("Labels", 18), ("Due", 9), ("✎", 3), ("Who", 8)]:
+        for label, width in [("List", 12), ("Card", None), ("Labels", 18), ("Due", 9), ("✎", 3), ("●", 3), ("Who", 8)]:
             table.add_column(label, width=width, key=label)
 
     def redraw(self) -> None:
@@ -67,6 +67,7 @@ class TriageScreen(BoardScreen):
         self.rows = sorted(self.card_query.filter(snapshot),
                            key=lambda card: SORTS[self.sort](card, snapshot))
         table.clear()
+        unread = self.app.store.unread_by_card()
         for card in self.rows:
             table.add_row(
                 BidiText(Text(snapshot.list_named(card.list_id), style="bold"), wrap=False, align_rtl=False),
@@ -74,6 +75,7 @@ class TriageScreen(BoardScreen):
                 render.label_chips(card.labels),
                 render.due_text(card),
                 Text(str(card.comment_count or ""), style="dim"),
+                render.unread_badge(unread[card.id]),
                 render.members_text(card, snapshot),
                 key=card.id,
             )

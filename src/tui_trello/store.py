@@ -6,6 +6,7 @@ ones further down the stack, or in another mode) redraws from the same data.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -93,6 +94,13 @@ class Store:
     @property
     def unread_count(self) -> int:
         return sum(n.unread for n in self.notifications or ())
+
+    def unread_by_card(self) -> Counter[str]:
+        """How many unread notifications each card has, by card id."""
+        return Counter(n.card_id for n in self.notifications or () if n.unread and n.card_id)
+
+    def unread_by_board(self) -> Counter[str]:
+        return Counter(n.board_id for n in self.notifications or () if n.unread and n.board_id)
 
     async def load_notifications(self) -> list[Notification]:
         """Fetch the notifications; return the unread ones that arrived since the last fetch (none on the first)."""

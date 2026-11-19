@@ -38,8 +38,16 @@ def due_text(card: Card, now: datetime | None = None) -> Text:
     return Text(f"◷ {card.due:%d %b}", style="dim")
 
 
-def badges(card: Card, now: datetime | None = None, *, due: bool = True) -> Text:
+def unread_badge(count: int) -> Text:
+    """Unread notifications on a board, list or card, in the bell's colour; blank for none."""
+    return Text(f"●{count}", style="bold yellow") if count else Text("")
+
+
+def badges(card: Card, now: datetime | None = None, *, due: bool = True, unread: int = 0) -> Text:
     parts = Text()
+    if unread:
+        parts.append_text(unread_badge(unread))
+        parts.append(" ")
     if card.comment_count:
         parts.append(f"✎{card.comment_count} ", style="dim")
     checked, total = card.checklist
@@ -56,10 +64,11 @@ def members_text(card: Card, context: CardContext) -> Text:
     return Text(" ", style="cyan").join(initials)
 
 
-def card_block(card: Card, context: CardContext, now: datetime | None = None) -> BidiText:
-    """A card summary for columns: the name (wrapped), then labels, badges and members."""
+def card_block(card: Card, context: CardContext, now: datetime | None = None, unread: int = 0) -> BidiText:
+    """A card summary for columns: the name (wrapped), then labels, badges (`unread` notifications first) and
+    members."""
     block = Text(card.name, style="bold")
-    meta = Text.assemble(label_dots(card.labels), " " if card.labels else "", badges(card, now), " ",
+    meta = Text.assemble(label_dots(card.labels), " " if card.labels else "", badges(card, now, unread=unread), " ",
                          members_text(card, context))
     if meta.plain.strip():
         block.append("\n")

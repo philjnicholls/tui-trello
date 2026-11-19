@@ -25,7 +25,7 @@ from tui_trello.ui.widgets.spinner import Spinner
 GROUP_STYLES = {"Overdue": "bold red", "Today": "bold yellow", "Done": "bold green"}
 LOCATION_WIDTH = 30
 DUE_WIDTH = 9
-BADGES_WIDTH = 10
+BADGES_WIDTH = 13
 GAPS = 6
 
 
@@ -64,6 +64,7 @@ class MyWorkScreen(ListScreen):
 
     def on_mount(self) -> None:
         self.app.store.work_changed.subscribe(self, lambda _: self.redraw())
+        self.app.store.notifications_changed.subscribe(self, lambda _: self.redraw())
         if self.snapshot:
             self.redraw()
         else:
@@ -96,13 +97,15 @@ class MyWorkScreen(ListScreen):
         name_width = max(12, width - location_width - DUE_WIDTH - BADGES_WIDTH - GAPS)
 
         self.cards_by_option = {}
+        unread = self.app.store.unread_by_card()
         rows: list[Option] = []
         for group, group_cards in groups:
             rows.append(Option(Text.assemble((group.upper(), GROUP_STYLES.get(group, "bold")),
                                              (f"  {len(group_cards)}", "dim")), disabled=True))
             for card in group_cards:
                 self.cards_by_option[card.id] = card
-                rows.append(Option(self.row(card, work, now, name_width, location_width), id=card.id))
+                rows.append(Option(self.row(card, work, now, name_width, location_width, unread[card.id]),
+                                   id=card.id))
         options.set_options(rows)
 
         ids = [option.id for option in rows]
@@ -121,14 +124,15 @@ class MyWorkScreen(ListScreen):
         self.query_one(CardView).show(self.current_card(), work)
 
     @staticmethod
-    def row(card: Card, work: WorkSnapshot, now: datetime, name_width: int, location_width: int) -> Text:
+    def row(card: Card, work: WorkSnapshot, now: datetime, name_width: int, location_width: int,
+            unread: int = 0) -> Text:
         dots = Text.assemble(render.label_dots(card.labels), " " if card.labels else "")
         name = Text.assemble(dots, fit(card.name, name_width - dots.cell_len))
         location = fit(Text.assemble(work.list_named(card.list_id), (f" · {work.board_named(card.board_id)}", "dim")),
                        location_width)
         due = render.due_text(card, now)
         due.truncate(DUE_WIDTH, pad=True)
-        row = Text.assemble(name, "  ", location, "  ", due, "  ", render.badges(card, now, due=False))
+        row = Text.assemble(name, "  ", location, "  ", due, "  ", render.badges(card, now, due=False, unread=unread))
         row.no_wrap, row.overflow = True, "ellipsis"
         return row
 

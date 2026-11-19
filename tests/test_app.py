@@ -7,6 +7,7 @@ import pytest
 from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
+from tui_trello.ui import render
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
@@ -378,6 +379,25 @@ async def test_notifications(app) -> None:
         assert app.store.unread_count == 0
         assert "●" not in "\n".join(screen_lines(app))  # no bell, no unread dots
         assert "Nothing unread" in "\n".join(screen_lines(app))
+
+
+async def test_unread_counts_on_boards_lists_and_cards(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        snapshot = app.store.snapshot
+        card = next(c for c in snapshot.cards if c.name == "Move cards between lists")  # two unread
+        lines = screen_lines(app)
+        assert any(snapshot.list_named(card.list_id) in line and "●" in line for line in lines)  # its list
+        await pilot.press("b")
+        await pilot.pause()
+        assert "●3 Product roadmap" in "\n".join(screen_lines(app))  # the board picker
+        await pilot.press("escape")
+        await pilot.pause()
+        assert "●2" in render.card_block(card, snapshot, unread=app.store.unread_by_card()[card.id]).text.plain
+        await app.store.mark_card_read(card.id)
+        await pilot.pause()
+        assert app.store.unread_by_card()[card.id] == 0
+        assert "●2" not in "\n".join(screen_lines(app))
 
 
 async def test_open_notification_loads_its_board(app) -> None:

@@ -36,6 +36,11 @@ class CardView(VerticalScroll):
 
     def on_mount(self) -> None:
         self.app.store.drafts_changed.subscribe(self, self.on_draft_changed)
+        self.app.store.notifications_changed.subscribe(self, lambda _: self.on_notifications_changed())
+
+    def on_notifications_changed(self) -> None:
+        if self.card and self.context:
+            self.show_meta(self.card, self.context)
 
     def on_draft_changed(self, card_id: str) -> None:
         if self.card and self.context and self.card.id == card_id:
@@ -74,7 +79,7 @@ class CardView(VerticalScroll):
     def show_meta(self, card: Card, context: CardContext) -> None:
         meta = Text.assemble(
             ("in ", "dim"), visual(Text(context.location(card), style="bold")), "  ",
-            render.badges(card), "\n",
+            render.badges(card, unread=self.app.store.unread_by_card()[card.id]), "\n",
         )
         names = [context.members[m].full_name for m in card.member_ids if m in context.members]
         if names:

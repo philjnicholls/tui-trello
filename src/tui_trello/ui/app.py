@@ -14,6 +14,7 @@ Motions apply to whatever has focus, so every list, table and scrolling pane mov
 
 from __future__ import annotations
 
+from rich.text import Text
 from textual import events, work
 from textual.app import App
 from textual.binding import Binding
@@ -207,7 +208,10 @@ class TrelloApp(App):
     @work
     async def action_pick_board(self) -> None:
         async def choices() -> list[Choice[str]]:
-            return [Choice(board.name, board.id, "★" if board.starred else "") for board in await self.store.boards()]
+            unread = self.store.unread_by_board()
+            return [Choice(board.name, board.id, "★" if board.starred else "",
+                           Text.assemble(render.unread_badge(unread[board.id]), " ") if unread[board.id] else None)
+                    for board in await self.store.boards()]
 
         # Opens straight away; typing while the boards load is kept.
         if board_id := await self.push_screen_wait(PickerScreen("Open board", choices)):

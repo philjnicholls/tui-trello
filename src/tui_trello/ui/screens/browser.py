@@ -62,8 +62,10 @@ class BrowserScreen(BoardScreen):
         if not (snapshot := self.snapshot):
             return
         lists = self.query_one("#lists", OptionList)
+        unread = self.app.store.unread_by_card()
         lists.set_options(
-            Option(Text.assemble(visual(lst.name), (f"  {self.count(lst.id)}", "dim")), id=lst.id)
+            Option(Text.assemble(visual(lst.name), (f"  {self.count(lst.id)}", "dim"), "  ",
+                                 render.unread_badge(sum(unread[c.id] for c in self.matching(lst.id)))), id=lst.id)
             for lst in snapshot.lists
         )
         ids = [lst.id for lst in snapshot.lists]
@@ -72,8 +74,12 @@ class BrowserScreen(BoardScreen):
         self.show_list()
 
     def count(self, list_id: str) -> int:
+        return len(self.matching(list_id))
+
+    def matching(self, list_id: str) -> list[Card]:
+        """The list's cards that the filter lets through."""
         snapshot, query = self.snapshot, self.card_query
-        return sum(query.matches(card, snapshot) for card in snapshot.cards_in(list_id)) if snapshot else 0
+        return [card for card in snapshot.cards_in(list_id) if query.matches(card, snapshot)] if snapshot else []
 
     def show_list(self) -> None:
         if not (snapshot := self.snapshot):
@@ -81,10 +87,11 @@ class BrowserScreen(BoardScreen):
         option = self.query_one("#lists", OptionList).highlighted_option
         self.list_id = option.id if option else None
         previous = self.current_card()
-        query = self.card_query
-        self.cards = [c for c in snapshot.cards_in(self.list_id) if query.matches(c, snapshot)] if self.list_id else []
+        self.cards = self.matching(self.list_id) if self.list_id else []
+        unread = self.app.store.unread_by_card()
         cards = self.query_one("#cards", OptionList)
-        cards.set_options(Option(render.card_block(card, snapshot), id=card.id) for card in self.cards)
+        cards.set_options(Option(render.card_block(card, snapshot, unread=unread[card.id]), id=card.id)
+                          for card in self.cards)
         if self.cards:
             ids = [c.id for c in self.cards]
             cards.highlighted = ids.index(previous.id) if previous and previous.id in ids else 0
