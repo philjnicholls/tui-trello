@@ -7,7 +7,7 @@ import pytest
 from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
-from tui_trello.ui import render
+from tui_trello.ui import clipboard, render
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
@@ -426,6 +426,43 @@ async def test_new_notification_is_announced(app, backend) -> None:
         app.check_notifications()  # nothing new since: no second toast
         await pilot.pause()
         assert len(app._notifications) == 1
+
+
+async def test_react_to_a_comment(app) -> None:
+    async with app.run_test(size=(120, 80)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "j", "j", "l")  # Review: Split backend from UI, four comments
+        card = app.screen.current_card()
+        await pilot.press("R")
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+        await pilot.press(*"looks good", "enter")  # Grace's comment, which has 🎉 from Ada (me) and Alan
+        await pilot.pause()
+        await pilot.press(*"hooray", "enter")  # mine: takes it off
+        await pilot.pause()
+        comment = next(c for c in await app.store.comments(card.id) if c.text == "Looks good to me.")
+        assert comment.reaction_counts("m1") == [("tada", "🎉", 1, False), ("+1", "👍", 1, False)]
+        await pilot.press("R", *"looks good", "enter", *"rocket", "enter")
+        await pilot.pause()
+        comment = next(c for c in await app.store.comments(card.id) if c.text == "Looks good to me.")
+        assert ("rocket", "🚀", 1, True) in comment.reaction_counts("m1")
+        assert "🚀 1" in "\n".join(screen_lines(app))  # in the preview
+
+
+async def test_copy_links(app, monkeypatch) -> None:
+    monkeypatch.setattr(clipboard, "command", lambda: None)  # not the real clipboard, the app's OSC 52 copy
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "j", "j", "l")
+        card = app.screen.current_card()
+        await pilot.press("y")
+        assert app.clipboard == card.url
+        await pilot.press("Y")
+        await pilot.pause()
+        await pilot.press(*"looks good", "enter")
+        await pilot.pause()
+        comment = next(c for c in await app.store.comments(card.id) if c.text == "Looks good to me.")
+        assert app.clipboard == f"{card.url}#comment-{comment.id}"
 
 
 async def test_comment_draft(app) -> None:

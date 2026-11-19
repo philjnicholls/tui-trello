@@ -40,6 +40,8 @@ class Store:
         self.backend = backend
         self.drafts = drafts or Drafts()
         self.drafts_changed: Signal[str] = Signal(owner, "drafts_changed")  # with the card's id
+        self.comments_changed: Signal[str] = Signal(owner, "comments_changed")  # likewise; for reactions
+        self._me: Member | None = None
         self.snapshot: BoardSnapshot | None = None
         self.work: WorkSnapshot | None = None
         self.board_changed: Signal[BoardSnapshot] = Signal(owner, "board_changed")
@@ -150,6 +152,36 @@ class Store:
             async with self._busy("comments"):
                 self._comments[card_id] = await self.backend.comments(card_id)
         return self._comments[card_id]
+
+    async def me(self) -> Member:
+        """The logged-in member, to tell their reactions from other people's."""
+        if self._me is None:
+            self._me = self.work.me if self.work else await self.backend.me()
+        return self._me
+
+    @property
+    def me_id(self) -> str:
+        return self._me.id if self._me else ""
+
+    async def toggle_reaction(self, card_id: str, comment: Comment, short_name: str, native: str) -> Comment:
+        """React to the comment with the emoji, or take the member's reaction off if they've given it."""
+        me = await self.me()
+        async with self._busy("save"):
+            if mine := comment.mine(short_name, me.id):
+                await self.backend.remove_reaction(comment.id, mine.id)
+                reactions = tuple(r for r in comment.reactions if r.id != mine.id)
+            else:
+                added = await self.backend.add_reaction(comment.id, short_name)
+                # Fill in what the response may leave out, so the reaction counts as the member's.
+                added = replace(added, member_id=added.member_id or me.id,
+                                member_name=added.member_name or me.full_name,
+                                short_name=added.short_name or short_name, native=added.native or native)
+                reactions = (*comment.reactions, added)
+        updated = replace(comment, reactions=reactions)
+        if card_id in self._comments:
+            self._comments[card_id] = [updated if c.id == comment.id else c for c in self._comments[card_id]]
+        self.comments_changed.publish(card_id)
+        return updated
 
     async def move_card(self, card: Card, list_id: str) -> Card:
         async with self._busy("save"):

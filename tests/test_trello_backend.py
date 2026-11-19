@@ -17,6 +17,14 @@ PAYLOADS = {
         {"id": "i1", "name": "Write it", "state": "incomplete", "pos": 1}]}],
     "/1/cards/c1/checkItem/i1": {"id": "i1", "name": "Write it", "state": "complete", "pos": 1},
     "/1/checklists/cl1/checkItems": {"id": "i2", "name": "Test it", "state": "incomplete", "pos": 2},
+    "/1/cards/c1/actions": [
+        {"id": "a1", "type": "commentCard", "date": "2026-11-18T09:00:00.000Z", "data": {"text": "Ship it?"},
+         "memberCreator": {"fullName": "Grace Hopper"}, "reactions": [
+             {"id": "r1", "idMember": "m1", "idModel": "a1", "idEmoji": "1F44D", "member": {"fullName": "Ada Lovelace"},
+              "emoji": {"unified": "1F44D", "native": "👍", "shortName": "+1", "skinVariation": None}}]},
+    ],
+    "/1/actions/a1/reactions": {"id": "r2", "idMember": "m1", "idEmoji": "1F389",
+                                "emoji": {"unified": "1F389", "native": "🎉", "shortName": "tada"}},
     "/1/members/me/notifications": [
         {"id": "n1", "type": "mentionedOnCard", "unread": True, "date": "2026-11-18T09:00:00.000Z",
          "memberCreator": {"fullName": "Grace Hopper"},
@@ -66,6 +74,19 @@ async def test_checklists() -> None:
     added = await backend.add_check_item("cl1", "Test it")
     assert added.name == "Test it" and not added.checked
     assert (requests[-1].method, requests[-1].url.params["name"]) == ("POST", "Test it")
+
+
+async def test_comment_reactions() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    [comment] = await backend.comments("c1")
+    assert requests[-1].url.params["reactions"] == "true"
+    assert comment.reaction_counts("m1") == [("+1", "👍", 1, True)]
+    added = await backend.add_reaction("a1", "tada")
+    assert (added.short_name, added.native, added.member_id) == ("tada", "🎉", "m1")
+    assert (requests[-1].method, requests[-1].read()) == ("POST", b'{"shortName":"tada"}')
+    await backend.remove_reaction("a1", "r1")
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/1/actions/a1/reactions/r1")
 
 
 async def test_no_permission() -> None:

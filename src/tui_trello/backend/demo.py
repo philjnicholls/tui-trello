@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,8 @@ from tui_trello.models import (
     Label,
     Member,
     Notification,
+    REACTIONS,
+    Reaction,
     WorkSnapshot,
 )
 
@@ -124,6 +127,9 @@ CHECK_ITEMS = ["Write the tests", "Update the `README.md`", "Try it on a real bo
                "Check the Arabic board", "Take **new** screenshots"]
 ARABIC_CHECK_ITEMS = ["الاختبار في Chrome", "الاختبار على الجوال", "تحديث التوثيق", "طلب مراجعة الكود"]
 
+# Who reacted to the sample comments, by the comment's place in COMMENTS / ARABIC_COMMENTS.
+COMMENT_REACTIONS = {0: [("m3", "+1")], 3: [("m1", "tada"), ("m3", "tada"), ("m2", "+1")]}
+
 COMMENTS = [
     ("Grace Hopper", "Picker works, but it should remember the last list I moved to."),
     ("Alan Turing", "Agreed. Also: undo with `u` within a few seconds?"),
@@ -188,7 +194,8 @@ class DemoBackend:
             for card_pos, (name, labels, members, due, comments, checklist) in enumerate(card_specs):
                 card_id = next(self._ids)
                 self._comments[card_id] = [
-                    Comment(next(self._ids), author, text, NOW - timedelta(hours=3 * i))
+                    Comment(next(self._ids), author, text, NOW - timedelta(hours=3 * i),
+                            tuple(self._reaction(member, emoji) for member, emoji in COMMENT_REACTIONS.get(i, ())))
                     for i, (author, text) in enumerate((ARABIC_COMMENTS if rtl else COMMENTS)[:comments])
                 ]
                 self._checklists[card_id] = self._checklist(checklist, rtl)
@@ -218,6 +225,18 @@ class DemoBackend:
         names = ARABIC_CHECK_ITEMS if rtl else CHECK_ITEMS
         items = tuple(CheckItem(next(self._ids), names[n % len(names)], n < checked, n) for n in range(total))
         return [Checklist(next(self._ids), "المهام" if rtl else "Tasks", items)]
+
+    def _reaction(self, member_id: str, short_name: str) -> Reaction:
+        native = next(native for name, native, _ in REACTIONS if name == short_name)
+        return Reaction(next(self._ids), member_id, MEMBERS[member_id].full_name, short_name, native)
+
+    def _patch_comment(self, comment_id: str, change: Callable[[Comment], Comment]) -> None:
+        for comments in self._comments.values():
+            for i, comment in enumerate(comments):
+                if comment.id == comment_id:
+                    comments[i] = change(comment)
+                    return
+        raise BackendError(f"No comment {comment_id}")
 
     def _find(self, card_id: str) -> tuple[BoardSnapshot, Card]:
         for snapshot in self._boards.values():
@@ -261,6 +280,18 @@ class DemoBackend:
         comment = Comment(next(self._ids), "You", text, datetime.now(timezone.utc))
         self._comments.setdefault(card_id, []).insert(0, comment)
         return comment
+
+    async def me(self) -> Member:
+        return MEMBERS[ME]
+
+    async def add_reaction(self, comment_id: str, short_name: str) -> Reaction:
+        reaction = self._reaction(ME, short_name)
+        self._patch_comment(comment_id, lambda c: replace(c, reactions=(*c.reactions, reaction)))
+        return reaction
+
+    async def remove_reaction(self, comment_id: str, reaction_id: str) -> None:
+        self._patch_comment(comment_id, lambda c: replace(
+            c, reactions=tuple(r for r in c.reactions if r.id != reaction_id)))
 
     async def set_description(self, card: Card, desc: str) -> Card:
         snapshot, current = self._find(card.id)

@@ -20,6 +20,7 @@ from tui_trello.models import (
     Label,
     Member,
     Notification,
+    Reaction,
     WorkSnapshot,
 )
 
@@ -96,7 +97,9 @@ class TrelloBackend:
         )
 
     async def comments(self, card_id: str) -> list[Comment]:
-        data = await self._request("GET", f"/cards/{card_id}/actions", filter="commentCard")
+        # reactions=true isn't in Trello's API reference, but it puts each comment's reactions in, as trello.com
+        # asks for them; without it they'd take a request per comment.
+        data = await self._request("GET", f"/cards/{card_id}/actions", filter="commentCard", reactions="true")
         return [Comment.from_api(c) for c in data]  # Trello returns newest first
 
     async def move_card(self, card: Card, list_id: str, pos: str = "top") -> Card:
@@ -109,6 +112,13 @@ class TrelloBackend:
     async def set_description(self, card: Card, desc: str) -> Card:
         data = await self._request("PUT", f"/cards/{card.id}", body={"desc": desc}, fields=CARD_FIELDS)
         return Card.from_api(data)
+
+    async def add_reaction(self, comment_id: str, short_name: str) -> Reaction:
+        data = await self._request("POST", f"/actions/{comment_id}/reactions", body={"shortName": short_name})
+        return Reaction.from_api(data)
+
+    async def remove_reaction(self, comment_id: str, reaction_id: str) -> None:
+        await self._request("DELETE", f"/actions/{comment_id}/reactions/{reaction_id}")
 
     async def labels(self, board_id: str) -> list[Label]:
         data = await self._request("GET", f"/boards/{board_id}/labels", fields="name,color")

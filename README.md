@@ -86,6 +86,15 @@ Drafts live in `~/.local/state/tui-trello/drafts.json` (`$XDG_STATE_HOME`), read
 tui-trello sees them: Trello's API has no drafts, so they don't appear on trello.com or in Trello's apps. If someone
 changes a description on Trello while you have a draft of it, the editor says so before you save over it.
 
+## Reactions and links
+
+`R` reacts to a comment: pick the comment, then an emoji. Picking one you've already given takes it off. A comment's
+reactions show under it, with yours highlighted.
+
+`y` copies the link to the card; `Y` picks a comment and copies the link to it. On a local desktop the link goes
+through `wl-copy`, `xclip`, `xsel` or `pbcopy`, whichever is installed. Elsewhere, over SSH for instance, the app asks
+the terminal to copy it (OSC 52); most terminals do, but GNOME Terminal and other VTE-based ones don't.
+
 ## Notifications
 
 The app checks Trello for new notifications every minute while it runs. Each new one pops up in the corner and as a
@@ -122,6 +131,8 @@ Vim-style throughout; `?` shows them all in the app.
 | `e`                    | edit the description (enter new line, ctrl+s saves)                                |
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |
 | `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
+| `R`                    | react to a comment: pick the comment, then an emoji; picking yours takes it off    |
+| `y` `Y`                | copy the link to the card, to one of its comments                                  |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |
 | `p`                    | my work: toggle the preview                                                        |
 | `d` `D` `u`            | notifications: mark read, mark all read, unread only                               |

@@ -6,8 +6,8 @@ src/tui_trello/
   config.py           Settings from env vars and ~/.config/tui-trello/config.toml
   drafts.py           unsent comments and description edits, per card, in ~/.local/state/tui-trello/drafts.json
   auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
-  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Checklist, CheckItem,
-                      Notification;
+  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Reaction, Checklist,
+                      CheckItem, Notification;
                       BoardSnapshot (one board) and WorkSnapshot (my cards on every board), both satisfying
                       CardContext
   agenda.py           group cards by due date for My work
@@ -25,12 +25,14 @@ src/tui_trello/
     bidi.py           right-to-left text: reorder per field (a compact UAX #9), BidiText, fit()
     markdown.py       Markdown in descriptions, comments and checklists as styled, RTL-aware text
     desktop.py        desktop notifications: notify-send, or the terminal's OSC 777 / OSC 9
+    clipboard.py      copying links: wl-copy, xclip, xsel or pbcopy, or the terminal's OSC 52
     widgets/
       card_view.py    card header, description, checklists, comments
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
       bell.py         the top-bar unread-notification count
     screens/
-      base.py         CardActionsScreen (m, c, t, x, o), ListScreen (/ filter), BoardScreen (redraws on board_changed)
+      base.py         CardActionsScreen (m, c, e, t, x, R, y, Y, o), ListScreen (/ filter), BoardScreen (redraws on
+                      board_changed)
       browser.py      Miller columns: lists | cards | preview
       triage.py       sortable, filterable table of every card
       mywork.py       my cards on every board, grouped by due date, with preview

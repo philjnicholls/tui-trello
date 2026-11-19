@@ -37,6 +37,11 @@ class CardView(VerticalScroll):
     def on_mount(self) -> None:
         self.app.store.drafts_changed.subscribe(self, self.on_draft_changed)
         self.app.store.notifications_changed.subscribe(self, lambda _: self.on_notifications_changed())
+        self.app.store.comments_changed.subscribe(self, self.on_comments_changed)
+
+    def on_comments_changed(self, card_id: str) -> None:
+        if self.card and self.card.id == card_id:
+            self.load_comments(self.card)
 
     def on_notifications_changed(self) -> None:
         if self.card and self.context:
@@ -125,6 +130,7 @@ class CardView(VerticalScroll):
     async def load_comments(self, card: Card, refresh: bool = False) -> None:
         try:
             comments = await self.app.store.comments(card.id, refresh=refresh)
+            me_id = (await self.app.store.me()).id
         except BackendError as exc:
             comments_text = Text(str(exc), style="red")
         else:
@@ -134,6 +140,10 @@ class CardView(VerticalScroll):
             for comment in comments:
                 when = f"{comment.date:%d %b %H:%M}" if comment.date else ""
                 parts += [Text.assemble(("● ", "magenta"), visual(Text(comment.author, style="bold")), "  ",
-                                        (when, "dim")), markdown.render(comment.text), Text("")]
+                                        (when, "dim")), markdown.render(comment.text)]
+                if counts := comment.reaction_counts(me_id):
+                    parts.append(Text("  ").join(Text(f"{native} {n}", style="bold cyan" if mine else "dim")
+                                                 for _, native, n, mine in counts))
+                parts.append(Text(""))
             comments_text = Group(*parts) if parts else Text("No comments.", style="dim")
         self.query_one("#card-comments", Static).update(comments_text)

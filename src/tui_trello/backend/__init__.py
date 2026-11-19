@@ -18,6 +18,7 @@ from tui_trello.models import (
     Label,
     Member,
     Notification,
+    Reaction,
     WorkSnapshot,
 )
 
@@ -27,6 +28,8 @@ class BackendError(Exception):
 
 
 class Backend(Protocol):
+    async def me(self) -> Member: ...
+
     async def boards(self) -> list[Board]: ...
 
     async def board_snapshot(self, board_id: str) -> BoardSnapshot: ...
@@ -40,6 +43,10 @@ class Backend(Protocol):
     async def add_comment(self, card_id: str, text: str) -> Comment: ...
 
     async def set_description(self, card: Card, desc: str) -> Card: ...
+
+    async def add_reaction(self, comment_id: str, short_name: str) -> Reaction: ...
+
+    async def remove_reaction(self, comment_id: str, reaction_id: str) -> None: ...
 
     async def labels(self, board_id: str) -> list[Label]: ...
 

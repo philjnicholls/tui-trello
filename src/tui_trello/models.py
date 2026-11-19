@@ -103,6 +103,10 @@ class Card:
     comment_count: int = 0
     checklist: tuple[int, int] = (0, 0)  # (checked, total)
 
+    def comment_url(self, comment_id: str) -> str:
+        """A link straight to one of the card's comments, as trello.com's "Copy link" on a comment gives."""
+        return f"{self.url}#comment-{comment_id}" if self.url else ""
+
     def with_list(self, list_id: str, pos: float) -> Card:
         return replace(self, list_id=list_id, pos=pos)
 
@@ -128,11 +132,49 @@ class Card:
 
 
 @dataclass(frozen=True)
+class Reaction:
+    """One member's emoji on a comment."""
+
+    id: str
+    member_id: str
+    member_name: str
+    short_name: str  # Trello's (iamcal emoji-data) name: "+1", "tada", ...; what a reaction is added by
+    native: str  # the emoji itself
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> Reaction:
+        emoji = data.get("emoji") or {}
+        unified = emoji.get("unified") or data.get("idEmoji") or ""
+        native = emoji.get("native") or "".join(chr(int(part, 16)) for part in unified.split("-") if part)
+        return cls(id=data["id"], member_id=data.get("idMember") or "",
+                   member_name=(data.get("member") or {}).get("fullName", ""),
+                   short_name=emoji.get("shortName") or "", native=native)
+
+
+# The reactions offered on a comment: (Trello's short name, the emoji, its name in the picker).
+REACTIONS = (
+    ("+1", "👍", "thumbs up"),
+    ("-1", "👎", "thumbs down"),
+    ("heart", "❤️", "heart"),
+    ("joy", "😂", "laugh"),
+    ("tada", "🎉", "hooray"),
+    ("open_mouth", "😮", "wow"),
+    ("cry", "😢", "sad"),
+    ("eyes", "👀", "eyes"),
+    ("pray", "🙏", "thanks"),
+    ("white_check_mark", "✅", "done"),
+    ("rocket", "🚀", "rocket"),
+    ("fire", "🔥", "fire"),
+)
+
+
+@dataclass(frozen=True)
 class Comment:
     id: str
     author: str
     text: str
     date: datetime | None
+    reactions: tuple[Reaction, ...] = ()
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> Comment:
@@ -141,7 +183,19 @@ class Comment:
             author=(data.get("memberCreator") or {}).get("fullName", "?"),
             text=data["data"]["text"],
             date=_parse_date(data.get("date")),
+            reactions=tuple(Reaction.from_api(r) for r in data.get("reactions") or ()),
         )
+
+    def mine(self, short_name: str, member_id: str) -> Reaction | None:
+        return next((r for r in self.reactions if r.short_name == short_name and r.member_id == member_id), None)
+
+    def reaction_counts(self, member_id: str = "") -> list[tuple[str, str, int, bool]]:
+        """(short name, emoji, how many, whether `member_id` is one of them), in the order they were first given."""
+        counts: dict[str, tuple[str, str, int, bool]] = {}
+        for r in self.reactions:
+            _, native, n, mine = counts.get(r.short_name, (r.short_name, r.native, 0, False))
+            counts[r.short_name] = (r.short_name, native, n + 1, mine or r.member_id == member_id)
+        return list(counts.values())
 
 
 @dataclass(frozen=True)

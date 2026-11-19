@@ -35,6 +35,8 @@ KEYS = [
         ("", "esc closes either and keeps what you wrote as a draft; empty the box to drop it"),
         ("t", "labels: enter puts one on or takes it off; type a new name to create one"),
         ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
+        ("R", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),
+        ("y Y", "copy the link to the card, to one of its comments"),
         ("o", "open in the web browser"),
     ]),
     ("Notifications", [

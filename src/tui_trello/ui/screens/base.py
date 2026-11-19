@@ -1,7 +1,7 @@
 """Behaviour shared by the screens.
 
-- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist, open in
-  browser). A new card feature
+- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist, react to
+  a comment, copy a link, open in browser). A new card feature
   (archive, assign, label, due date, ...) is added here once, as a binding plus an action, and works in every view.
   Subclasses only say which card is current.
 - :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`.
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import webbrowser
 
+from rich.text import Text
 from textual import on, work
 from textual.binding import Binding
 from textual.containers import Horizontal
@@ -24,8 +25,9 @@ from textual.screen import Screen
 from textual.widgets import Input
 
 from tui_trello.backend import BackendError
-from tui_trello.models import BoardSnapshot, Card
+from tui_trello.models import REACTIONS, BoardSnapshot, Card, Comment
 from tui_trello.query import CardQuery
+from tui_trello.ui import clipboard
 from tui_trello.ui.screens.picker import (
     ChecklistPickerScreen,
     Choice,
@@ -56,6 +58,9 @@ class CardActionsScreen(Screen):
         Binding("e", "edit_description", "Description"),
         Binding("t", "labels", "Labels"),
         Binding("x", "checklist", "Checklist"),
+        Binding("R", "react", "React", show=False),
+        Binding("y", "copy_link", "Copy link", show=False),
+        Binding("Y", "copy_comment_link", "Copy comment link", show=False),
         Binding("o", "open_in_browser", "Open in browser", show=False),
     ]
 
@@ -148,6 +153,67 @@ class CardActionsScreen(Screen):
     def action_checklist(self) -> None:
         if card := self.current_card():
             self.app.push_screen(ChecklistPickerScreen(card.id))
+
+    async def pick_comment(self, card: Card, title: str) -> Comment | None:
+        """Choose one of the card's comments, newest first."""
+        store = self.app.store
+        try:
+            comments = await store.comments(card.id)
+            me_id = (await store.me()).id
+        except BackendError as exc:
+            self.notify(str(exc), severity="error")
+            return None
+        if not comments:
+            self.notify("No comments on this card")
+            return None
+        choices = []
+        for comment in comments:
+            text = " ".join(comment.text.split())
+            when = f"{comment.date:%d %b}" if comment.date else ""
+            reactions = " ".join(f"{native}{n}" for _, native, n, _ in comment.reaction_counts(me_id))
+            choices.append(Choice(f"{comment.author}: {text[:60]}{'…' if len(text) > 60 else ''}", comment,
+                                  "  ".join(part for part in (when, reactions) if part)))
+        return await self.app.push_screen_wait(PickerScreen(title, choices))
+
+    @work
+    async def action_react(self) -> None:
+        card = self.current_card()
+        if not card or not (comment := await self.pick_comment(card, "React to which comment?")):
+            return
+        me_id = self.app.store.me_id
+        counts = {name: (n, mine) for name, _, n, mine in comment.reaction_counts(me_id)}
+        offered = [(name, native, words) for name, native, words in REACTIONS]
+        # Someone else's emoji that isn't on the list can still be added to, or taken off.
+        offered += [(name, native, name.replace("_", " ")) for name, native, _, _ in comment.reaction_counts(me_id)
+                    if all(name != o[0] for o in REACTIONS)]
+        choices = []
+        for name, native, words in offered:
+            n, mine = counts.get(name, (0, False))
+            hint = ", ".join(part for part in (f"{n}" if n else "", "yours: enter takes it off" if mine else "")
+                             if part)
+            choices.append(Choice(words, (name, native), hint, Text(f"{native}  ")))
+        chosen = await self.app.push_screen_wait(PickerScreen(f"React to {comment.author}'s comment", choices))
+        if not chosen:
+            return
+        name, native = chosen
+        try:
+            await self.app.store.toggle_reaction(card.id, comment, name, native)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error")
+
+    def copy(self, url: str, what: str) -> None:
+        clipboard.copy(url, self.app.copy_to_clipboard)
+        self.notify(url, title=f"Copied the link to {what}")
+
+    def action_copy_link(self) -> None:
+        if (card := self.current_card()) and card.url:
+            self.copy(card.url, "the card")
+
+    @work
+    async def action_copy_comment_link(self) -> None:
+        card = self.current_card()
+        if card and card.url and (comment := await self.pick_comment(card, "Copy the link to which comment?")):
+            self.copy(card.comment_url(comment.id), f"{comment.author}'s comment")
 
     def action_open_in_browser(self) -> None:
         if (card := self.current_card()) and card.url:
