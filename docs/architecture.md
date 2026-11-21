@@ -6,11 +6,12 @@ src/tui_trello/
   config.py           Settings from env vars and ~/.config/tui-trello/config.toml
   drafts.py           unsent comments and description edits, per card, in ~/.local/state/tui-trello/drafts.json
   auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
-  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Reaction, Checklist,
-                      CheckItem, Notification;
+  models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Reaction, Attachment,
+                      Checklist, CheckItem, Notification;
                       BoardSnapshot (one board) and WorkSnapshot (my cards on every board), both satisfying
                       CardContext
   agenda.py           group cards by due date for My work
+  files.py            the downloads folder, unique file names, human-readable sizes
   query.py            the card filter language (#label @member list:x !overdue words)
   store.py            app-wide state: open board, my work, notifications, caches; board_changed, work_changed and
                       notifications_changed signals
@@ -27,11 +28,11 @@ src/tui_trello/
     desktop.py        desktop notifications: notify-send, or the terminal's OSC 777 / OSC 9
     clipboard.py      copying links: wl-copy, xclip, xsel or pbcopy, or the terminal's OSC 52
     widgets/
-      card_view.py    card header, description, checklists, comments
+      card_view.py    card header, description, attachments, checklists, comments
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
       bell.py         the top-bar unread-notification count
     screens/
-      base.py         CardActionsScreen (m, c, e, t, x, R, y, Y, o), ListScreen (/ filter), BoardScreen (redraws on
+      base.py         CardActionsScreen (m, c, e, t, x, a, R, y, Y, o), ListScreen (/ filter), BoardScreen (redraws on
                       board_changed)
       browser.py      Miller columns: lists | cards | preview
       triage.py       sortable, filterable table of every card
@@ -39,8 +40,8 @@ src/tui_trello/
       notifications.py  Trello's notifications; enter opens the card, d / D mark read
       card.py         full-screen card
       keys.py         the ? key reference
-      picker.py       PickerScreen (fuzzy choose one), its label and checklist
-                      variants, and TextPromptScreen
+      picker.py       PickerScreen (fuzzy choose one), its label, checklist, attachment and file
+                      variants, and TextPromptScreen (ctrl+o attaches a file)
 tests/                pytest; UI flows driven by key presses against the demo backend
 scripts/screenshots.py
 ```

@@ -10,13 +10,16 @@ from collections import Counter
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from pathlib import Path
 
 from textual.dom import DOMNode
 from textual.signal import Signal
 
 from tui_trello.backend import Backend
 from tui_trello.drafts import Draft, Drafts, Kind
+from tui_trello.files import download_dir, unique_path
 from tui_trello.models import (
+    Attachment,
     Board,
     BoardSnapshot,
     Card,
@@ -55,6 +58,7 @@ class Store:
         self._boards: list[Board] | None = None
         self._comments: dict[str, list[Comment]] = {}
         self._checklists: dict[str, list[Checklist]] = {}
+        self._attachments: dict[str, list[Attachment]] = {}
         self._labels: dict[str, list[Label]] = {}  # by board, for boards other than the open one
         self._members: dict[str, list[Member]] = {}  # likewise
 
@@ -84,6 +88,7 @@ class Store:
             self.snapshot = await self.backend.board_snapshot(board_id)
         self._comments.clear()
         self._checklists.clear()
+        self._attachments.clear()
         self.board_changed.publish(self.snapshot)
         return self.snapshot
 
@@ -249,6 +254,44 @@ class Store:
         self._checklists[card_id] = change(self._checklists[card_id])
         if card := self.find_card(card_id):
             self._replace(replace(card, checklist=checklist_badge(self._checklists[card_id])))
+
+    def has_attachments(self, card_id: str) -> bool:
+        return bool(self._attachments.get(card_id))
+
+    async def attachments(self, card_id: str, refresh: bool = False) -> list[Attachment]:
+        if card_id not in self._attachments or refresh:
+            async with self._busy("attachments"):
+                self._attachments[card_id] = await self.backend.attachments(card_id)
+        return self._attachments[card_id]
+
+    async def attach_file(self, card_id: str, path: Path) -> Attachment:
+        async with self._busy("save"):
+            attachment = await self.backend.attach_file(card_id, path)
+        self._added_attachment(card_id, attachment)
+        return attachment
+
+    async def attach_link(self, card_id: str, url: str, name: str = "") -> Attachment:
+        async with self._busy("save"):
+            attachment = await self.backend.attach_link(card_id, url, name)
+        self._added_attachment(card_id, attachment)
+        return attachment
+
+    def _added_attachment(self, card_id: str, attachment: Attachment) -> None:
+        """Add it to the cached list, if loaded, and bring the card's 📎 badge in line."""
+        if card_id in self._attachments:
+            self._attachments[card_id] = [*self._attachments[card_id], attachment]
+        if card := self.find_card(card_id):
+            count = len(self._attachments[card_id]) if card_id in self._attachments else card.attachment_count + 1
+            self._replace(replace(card, attachment_count=count))
+
+    async def download_attachment(self, attachment: Attachment, directory: Path | None = None) -> Path:
+        """Save an uploaded file into the downloads directory (under a new name if it's taken); return where."""
+        directory = directory or download_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        dest = unique_path(directory, attachment.file_name or attachment.name)
+        async with self._busy("download"):
+            await self.backend.download_attachment(attachment, dest)
+        return dest
 
     async def labels(self, board_id: str) -> list[Label]:
         """A board's labels, sorted by name."""

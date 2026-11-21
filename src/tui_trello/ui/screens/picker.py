@@ -1,10 +1,13 @@
-"""Reusable modals: a fuzzy picker (boards, lists, labels, checklist items, ...) and a text prompt (comments,
-descriptions)."""
+"""Reusable modals: a fuzzy picker (boards, lists, labels, checklist items, attachments, files, ...) and a text
+prompt (comments, descriptions)."""
 
 from __future__ import annotations
 
+import re
+import webbrowser
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Generic, TypeVar
 
 from rich.text import Text
@@ -21,8 +24,9 @@ from textual.widgets.option_list import Option
 
 from tui_trello.backend import BackendError
 from tui_trello.mentions import candidates, typing_mention
-from tui_trello.models import Checklist, Member
-from tui_trello.ui import markdown
+from tui_trello.files import human_size
+from tui_trello.models import Attachment, Checklist, Member
+from tui_trello.ui import clipboard, markdown
 from tui_trello.ui.bidi import BidiText, has_rtl
 
 T = TypeVar("T")
@@ -52,7 +56,7 @@ class PickerScreen(ModalScreen[T | None]):
         border: round $accent; background: $surface; padding: 0 1;
     }
     PickerScreen .title { text-style: bold; color: $accent; padding: 0 0 1 0; }
-    PickerScreen .hint { color: $text-muted; margin-top: 1; }
+    PickerScreen .hint { color: $text-muted; margin-top: 1; width: 100%; }
     PickerScreen Input, PickerScreen Input:focus { border: none; height: 1; padding: 0; margin-bottom: 1; }
     PickerScreen OptionList { border: none; height: auto; max-height: 20; background: transparent; }
     """
@@ -182,6 +186,9 @@ class TextPromptScreen(ModalScreen[str | None]):
 
     With `mentions` (a coroutine function returning members), typing "@" shows matching members below the box:
     tab or enter puts in the highlighted one's @username, up and down choose, Esc hides the list.
+
+    With `attach` (a coroutine function that uploads a file and returns the text to put in for it), ctrl+o browses
+    for a file and puts its link in at the cursor.
     """
 
     DEFAULT_CSS = """
@@ -207,14 +214,16 @@ class TextPromptScreen(ModalScreen[str | None]):
         Binding("down", "mention_cursor(1)", show=False, priority=True),
         Binding("up", "mention_cursor(-1)", show=False, priority=True),
         Binding("alt+enter,ctrl+j", "newline", "New line", priority=True),  # alt+enter needs ui/keys_compat.py
+        Binding("ctrl+o", "attach", "Attach a file", show=False, priority=True),
     ]
 
     DRAFT_DELAY = 0.4  # seconds after the last key before `on_change`
 
     def __init__(self, title: str, mentions: Callable[[], Awaitable[list[Member]]] | None = None, *,
                  text: str = "", multiline: bool = False, on_change: Callable[[str], None] | None = None,
-                 notice: str = "") -> None:
+                 notice: str = "", attach: Callable[[Path], Awaitable[str]] | None = None) -> None:
         super().__init__(classes="editor" if multiline else "")
+        self.attach = attach
         self.title_text = title
         self.initial_text = text
         self.multiline = multiline
@@ -238,7 +247,11 @@ class TextPromptScreen(ModalScreen[str | None]):
                 hint = "enter send · alt+enter new line · esc close"
             if self.on_change:
                 hint += " (keeps a draft)"
-            yield Label(f"{hint} · @ mention" if self.mentions_loader else hint, classes="hint")
+            if self.mentions_loader:
+                hint += " · @ mention"
+            if self.attach:
+                hint += " · ctrl+o attach a file"
+            yield Label(hint, classes="hint")
 
     def on_mount(self) -> None:
         area = self.query_one(TextArea)
@@ -252,6 +265,8 @@ class TextPromptScreen(ModalScreen[str | None]):
         # While no suggestions are showing, tab and the arrows belong to the text box.
         if action in ("accept_mention", "mention_cursor"):
             return self.suggesting
+        if action == "attach":
+            return self.attach is not None
         return True
 
     @on(TextArea.Changed)
@@ -344,6 +359,19 @@ class TextPromptScreen(ModalScreen[str | None]):
 
     def action_newline(self) -> None:
         self.query_one(TextArea).insert("\n")
+
+    @work(group="attach")
+    async def action_attach(self) -> None:
+        if not self.attach or not (path := await self.app.push_screen_wait(FilePickerScreen())):
+            return
+        try:
+            text = await self.attach(path)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        area = self.query_one(TextArea)
+        area.insert(text)
+        area.focus()
 
 
 class LabelPickerScreen(PickerScreen):
@@ -456,3 +484,162 @@ class ChecklistPickerScreen(PickerScreen):
         self.refilter()
         if highlighted is not None and value[0] == "toggle" and self.shown:
             self.query_one(OptionList).highlighted = min(highlighted, len(self.shown) - 1)
+
+
+class AttachmentPickerScreen(PickerScreen):
+    """A card's attachments. Enter opens the highlighted one in the web browser: a link, or an upload, which
+    trello.com serves to the logged-in browser. ctrl+s saves an upload to the downloads directory, ctrl+y copies the
+    link. "attach a file" browses for one to upload; typing or pasting a URL offers to attach it as a link."""
+
+    HINT = "enter: open in the browser · ctrl+s: save to Downloads · ctrl+y: copy link · paste a URL to attach it"
+
+    BINDINGS = [
+        Binding("ctrl+s", "save", "Save", show=False),
+        Binding("ctrl+y", "copy_link", "Copy link", show=False),
+    ]
+
+    def __init__(self, card_id: str) -> None:
+        self.card_id = card_id
+        super().__init__("Attachments", self.attachment_choices)
+
+    async def attachment_choices(self) -> list[Choice]:
+        from tui_trello.ui.bidi import visual
+
+        store = self.app.store
+        if card := store.find_card(self.card_id):
+            self.query_one(".title", Label).update(Text.assemble("Attachments on “", visual(card.name), "”"))
+        return [Choice(a.name, a, attachment_hint(a), attachment_marker(a))
+                for a in await store.attachments(self.card_id)]
+
+    def extras(self, query: str) -> list[Choice]:
+        plus = Text("+ ", style="bold green")
+        url = query.strip()
+        link = [Choice(f"attach the link {url}", ("link", url), marker=plus)] if re.match(r"https?://\S+$", url) else []
+        return link + [Choice("attach a file…", ("file",), marker=plus)]
+
+    def highlighted(self) -> Attachment | None:
+        highlighted = self.query_one(OptionList).highlighted
+        if highlighted is None or highlighted >= len(self.shown):
+            return None
+        value = self.shown[highlighted].value
+        return value if isinstance(value, Attachment) else None
+
+    def choose(self, choice: Choice) -> None:
+        if isinstance(choice.value, Attachment):
+            webbrowser.open(choice.value.url)
+            self.dismiss(None)
+        else:
+            self.add(choice.value)
+
+    @work(group="attachments")
+    async def add(self, value: tuple[str, ...]) -> None:
+        store = self.app.store
+        try:
+            if value[0] == "link":
+                attachment = await store.attach_link(self.card_id, value[1])
+            elif path := await self.app.push_screen_wait(FilePickerScreen()):
+                attachment = await store.attach_file(self.card_id, path)
+            else:
+                return
+        except BackendError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        self.notify(f"Attached {attachment.name}")
+        self.query_one(Input).value = ""
+        self.choices = await self.attachment_choices()
+        self.refilter()
+
+    @work(group="attachments")
+    async def action_save(self) -> None:
+        if not (attachment := self.highlighted()):
+            return
+        if not attachment.is_upload:
+            self.notify("That's a link, not a file: enter opens it")
+            return
+        try:
+            path = await self.app.store.download_attachment(attachment)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error", timeout=10)
+        else:
+            self.notify(str(path), title=f"Saved {attachment.name}")
+
+    def action_copy_link(self) -> None:
+        if attachment := self.highlighted():
+            clipboard.copy(attachment.url, self.app.copy_to_clipboard)
+            self.notify(attachment.url, title="Copied the link")
+
+
+def attachment_marker(attachment: Attachment) -> Text:
+    return Text("📎 " if attachment.is_upload else "🔗 ")
+
+
+def attachment_hint(attachment: Attachment) -> str:
+    """An upload's size and date; a link's site."""
+    if not attachment.is_upload:
+        return re.sub(r"^https?://(www\.)?([^/]+).*", r"\2", attachment.url)
+    when = f"{attachment.date:%d %b %Y}" if attachment.date else ""
+    return " · ".join(part for part in (human_size(attachment.size) if attachment.size else "", when) if part)
+
+
+class FilePickerScreen(PickerScreen):
+    """Browse for a file to attach. Enter goes into a folder or picks a file; typing filters the folder, and typing a
+    path (~ works) offers to pick that file or go to that folder. Hidden files are left out unless typed. Starts
+    where the last file was picked, this session, else in the working directory."""
+
+    HINT = "enter: open folder / pick file · type a path to go there · esc: cancel"
+
+    last_dir: Path | None = None
+
+    def __init__(self, title: str = "Attach which file?", start: Path | None = None) -> None:
+        self.base_title = title
+        self.cwd = (start or FilePickerScreen.last_dir or Path.cwd()).resolve()
+        super().__init__(self.heading(), self.listing())
+
+    def heading(self) -> str:
+        home = str(Path.home())
+        where = str(self.cwd)
+        return f"{self.base_title}  {'~' + where[len(home):] if where.startswith(home) else where}"
+
+    def listing(self) -> list[Choice[Path]]:
+        folder = Text("▸ ", style="bold blue")
+        choices = [Choice("../", self.cwd.parent, marker=folder)] if self.cwd.parent != self.cwd else []
+        try:
+            entries = sorted(self.cwd.iterdir(), key=lambda p: p.name.lower())
+        except OSError as exc:
+            return [*choices, Choice(f"can't read this folder: {exc.strerror}", self.cwd.parent, marker=folder)]
+        files = []
+        for path in entries:
+            if path.name.startswith("."):
+                continue
+            try:
+                if path.is_dir():
+                    choices.append(Choice(f"{path.name}/", path, marker=folder))
+                else:
+                    files.append(Choice(path.name, path, human_size(path.stat().st_size), Text("  ")))
+            except OSError:
+                continue  # a broken link, or no permission to look
+        return choices + files
+
+    def extras(self, query: str) -> list[Choice]:
+        typed = query.strip()
+        if not typed or not ("/" in typed or typed.startswith("~")):
+            return []
+        path = Path(typed).expanduser()
+        path = path if path.is_absolute() else self.cwd / path
+        if path.is_file():
+            return [Choice(f"pick {path}", path, marker=Text("+ ", style="bold green"))]
+        if path.is_dir():
+            return [Choice(f"go to {path}/", path, marker=Text("▸ ", style="bold blue"))]
+        return []
+
+    def choose(self, choice: Choice) -> None:
+        path: Path = choice.value
+        if path.is_dir():
+            self.cwd = path.resolve()
+            self.query_one(".title", Label).update(self.heading())
+            self.choices = self.listing()
+            self.query_one(Input).value = ""
+            self.refilter()
+        else:
+            FilePickerScreen.last_dir = path.parent
+            self.dismiss(path)

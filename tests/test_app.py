@@ -3,7 +3,9 @@
 import asyncio
 
 import pytest
+from textual.widgets import TextArea
 
+from tui_trello import store as store_module
 from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
@@ -14,7 +16,9 @@ from tui_trello.ui.screens.card import CardScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
 from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import (
+    AttachmentPickerScreen,
     ChecklistPickerScreen,
+    FilePickerScreen,
     LabelPickerScreen,
     PickerScreen,
 )
@@ -463,6 +467,71 @@ async def test_copy_links(app, monkeypatch) -> None:
         await pilot.pause()
         comment = next(c for c in await app.store.comments(card.id) if c.text == "Looks good to me.")
         assert app.clipboard == f"{card.url}#comment-{comment.id}"
+
+
+async def test_attachments(app, monkeypatch, tmp_path) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    monkeypatch.setattr(store_module, "download_dir", lambda: tmp_path / "Downloads")
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "j", "l")  # Doing: Move cards between lists, a file and a link
+        card = app.screen.current_card()
+        assert card.attachment_count == 2
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "picker-sketch.png" in lines and "example.com" in lines  # in the preview
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, AttachmentPickerScreen)
+        await pilot.press("ctrl+s")  # the file
+        await pilot.pause()
+        assert (tmp_path / "Downloads" / "picker-sketch.png").read_bytes().startswith(b"\x89PNG")
+        await pilot.press("ctrl+j", "enter")  # the link
+        await pilot.pause()
+        assert opened == ["https://example.com/pr/42"] and not isinstance(app.screen, AttachmentPickerScreen)
+
+
+async def test_attach_a_file_and_a_link(app, monkeypatch, tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("remember")
+    (tmp_path / "sub").mkdir()
+    monkeypatch.setattr(FilePickerScreen, "last_dir", tmp_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("a")
+        await pilot.pause()
+        await pilot.press(*"attach a file", "enter")
+        await pilot.pause()
+        assert isinstance(app.screen, FilePickerScreen)
+        assert [c.label for c in app.screen.choices] == ["../", "sub/", "notes.txt"]
+        await pilot.press(*"notes", "enter")
+        await pilot.pause()
+        assert isinstance(app.screen, AttachmentPickerScreen)
+        await pilot.press(*"https://example.com/spec", "enter")
+        await pilot.pause()
+        names = [a.name for a in await app.store.attachments(card.id)]
+        assert names == ["notes.txt", "https://example.com/spec"]
+        assert app.store.find_card(card.id).attachment_count == 2  # the 📎 badge
+
+
+async def test_attach_a_file_to_a_comment(app, monkeypatch, tmp_path) -> None:
+    (tmp_path / "trace.log").write_text("boom")
+    monkeypatch.setattr(FilePickerScreen, "last_dir", tmp_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("c", *"see ", "ctrl+o")
+        await pilot.pause()
+        await pilot.press(*"trace", "enter")
+        await pilot.pause()
+        [attachment] = await app.store.attachments(card.id)
+        assert app.screen.query_one(TextArea).text == f"see [trace.log]({attachment.url})"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert (await app.store.comments(card.id))[0].text == f"see [trace.log]({attachment.url})"
 
 
 async def test_comment_draft(app) -> None:

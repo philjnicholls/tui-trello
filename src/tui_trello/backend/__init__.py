@@ -6,9 +6,11 @@ A backend is anything that implements :class:`Backend`. Screens never talk to a 
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 from tui_trello.models import (
+    Attachment,
     Board,
     BoardSnapshot,
     Card,
@@ -65,6 +67,14 @@ class Backend(Protocol):
     async def add_check_item(self, checklist_id: str, name: str) -> CheckItem: ...
 
     async def create_checklist(self, card_id: str, name: str) -> Checklist: ...
+
+    async def attachments(self, card_id: str) -> list[Attachment]: ...
+
+    async def attach_file(self, card_id: str, path: Path) -> Attachment: ...
+
+    async def attach_link(self, card_id: str, url: str, name: str = "") -> Attachment: ...
+
+    async def download_attachment(self, attachment: Attachment, dest: Path) -> None: ...
 
     async def notifications(self) -> list[Notification]: ...
 

@@ -31,10 +31,13 @@ KEYS = [
         ("enter / l", "open"),
         ("m", "move to another list"),
         ("c", "comment: enter sends, alt+enter new line, @ mentions someone (tab or enter picks)"),
+        ("", "in a comment or description, ctrl+o attaches a file and puts its link in"),
         ("e", "edit the description: enter new line, ctrl+s saves"),
         ("", "esc closes either and keeps what you wrote as a draft; empty the box to drop it"),
         ("t", "labels: enter puts one on or takes it off; type a new name to create one"),
         ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
+        ("a", "attachments: enter opens one in the browser, ctrl+s saves it to Downloads, ctrl+y copies its link; "
+              "attach a file, or paste a URL to attach a link"),
         ("R", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),
         ("y Y", "copy the link to the card, to one of its comments"),
         ("o", "open in the web browser"),

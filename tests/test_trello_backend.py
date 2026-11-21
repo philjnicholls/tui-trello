@@ -1,6 +1,8 @@
 import httpx
 import pytest
 
+from tui_trello.models import Attachment
+
 from tui_trello.auth import TokenAuth
 from tui_trello.backend import BackendError
 from tui_trello.backend.trello import TrelloBackend
@@ -25,6 +27,8 @@ PAYLOADS = {
     ],
     "/1/actions/a1/reactions": {"id": "r2", "idMember": "m1", "idEmoji": "1F389",
                                 "emoji": {"unified": "1F389", "native": "🎉", "shortName": "tada"}},
+    "/1/cards/c1/attachments": [{"id": "at1", "name": "notes.txt", "isUpload": True, "bytes": 5,
+                                 "url": "https://trello.com/1/cards/c1/attachments/at1/download/notes.txt"}],
     "/1/members/me/notifications": [
         {"id": "n1", "type": "mentionedOnCard", "unread": True, "date": "2026-11-18T09:00:00.000Z",
          "memberCreator": {"fullName": "Grace Hopper"},
@@ -87,6 +91,56 @@ async def test_comment_reactions() -> None:
     assert (requests[-1].method, requests[-1].read()) == ("POST", b'{"shortName":"tada"}')
     await backend.remove_reaction("a1", "r1")
     assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/1/actions/a1/reactions/r1")
+
+
+async def test_attachments(tmp_path) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        listed = PAYLOADS["/1/cards/c1/attachments"]
+        return httpx.Response(200, json=listed if request.method == "GET" else listed[0])
+
+    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    [attachment] = await backend.attachments("c1")
+    assert (attachment.name, attachment.is_upload) == ("notes.txt", True)
+    assert "isUpload" in requests[-1].url.params["fields"]
+    path = tmp_path / "plan.pdf"
+    path.write_bytes(b"%PDF-1.7 plan")
+    await backend.attach_file("c1", path)
+    upload = requests[-1]
+    assert (upload.method, upload.url.path, upload.url.params["name"]) == ("POST", "/1/cards/c1/attachments", "plan.pdf")
+    assert upload.headers["content-type"].startswith("multipart/form-data")
+    body = upload.read()
+    assert b'name="file"; filename="plan.pdf"' in body and b"%PDF-1.7 plan" in body and b"application/pdf" in body
+    await backend.attach_link("c1", "https://example.com/pr/42")
+    assert requests[-1].url.params["url"] == "https://example.com/pr/42" and "name" not in requests[-1].url.params
+
+
+async def test_download_with_a_token_login(tmp_path) -> None:
+    """Trello's download links want the key and token in an OAuth header, not the query string."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"hello")
+
+    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    attachment = Attachment("at1", "notes.txt", "https://trello.com/1/cards/c1/attachments/at1/download/notes.txt",
+                            is_upload=True)
+    await backend.download_attachment(attachment, tmp_path / "notes.txt")
+    assert (tmp_path / "notes.txt").read_bytes() == b"hello"
+    assert seen[0].headers["authorization"] == 'OAuth oauth_consumer_key="KEY", oauth_token="TOKEN"'
+
+
+async def test_download_refused_leaves_no_file(tmp_path) -> None:
+    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(
+        lambda request: httpx.Response(401, text="unauthorized permission requested")))
+    attachment = Attachment("at1", "notes.txt", "https://trello.com/1/cards/c1/attachments/at1/download/notes.txt",
+                            is_upload=True)
+    with pytest.raises(BackendError, match="login --token"):
+        await backend.download_attachment(attachment, tmp_path / "notes.txt")
+    assert not (tmp_path / "notes.txt").exists()
 
 
 async def test_no_permission() -> None:

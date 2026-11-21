@@ -1,7 +1,7 @@
 """Behaviour shared by the screens.
 
-- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist, react to
-  a comment, copy a link, open in browser). A new card feature
+- :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist,
+  attachments, react to a comment, copy a link, open in browser). A new card feature
   (archive, assign, label, due date, ...) is added here once, as a binding plus an action, and works in every view.
   Subclasses only say which card is current.
 - :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`.
@@ -16,6 +16,7 @@ meaning ("back out", "go in") depends on the layout.
 from __future__ import annotations
 
 import webbrowser
+from pathlib import Path
 
 from rich.text import Text
 from textual import on, work
@@ -29,6 +30,7 @@ from tui_trello.models import REACTIONS, BoardSnapshot, Card, Comment
 from tui_trello.query import CardQuery
 from tui_trello.ui import clipboard
 from tui_trello.ui.screens.picker import (
+    AttachmentPickerScreen,
     ChecklistPickerScreen,
     Choice,
     LabelPickerScreen,
@@ -58,6 +60,7 @@ class CardActionsScreen(Screen):
         Binding("e", "edit_description", "Description"),
         Binding("t", "labels", "Labels"),
         Binding("x", "checklist", "Checklist"),
+        Binding("a", "attachments", "Attachments", show=False),
         Binding("R", "react", "React", show=False),
         Binding("y", "copy_link", "Copy link", show=False),
         Binding("Y", "copy_comment_link", "Copy comment link", show=False),
@@ -101,7 +104,8 @@ class CardActionsScreen(Screen):
         text = await self.app.push_screen_wait(TextPromptScreen(
             f"Comment on “{card.name}”", mentions=lambda: store.members(board_id),
             text=draft.text if draft else "", notice="Your unsent comment" if draft else "",
-            on_change=lambda text: store.save_draft("comment", card.id, text)))
+            on_change=lambda text: store.save_draft("comment", card.id, text),
+            attach=lambda path: self.attach_for_text(card, path)))
         if not text:
             return
         try:
@@ -131,7 +135,8 @@ class CardActionsScreen(Screen):
 
         desc = await self.app.push_screen_wait(TextPromptScreen(
             f"Description of “{card.name}”", mentions=lambda: store.members(board_id), multiline=True,
-            text=draft.text if draft else card.desc, notice=notice, on_change=keep))
+            text=draft.text if draft else card.desc, notice=notice, on_change=keep,
+            attach=lambda path: self.attach_for_text(card, path)))
         current = store.find_card(card.id) or card
         if desc is None:
             return
@@ -145,6 +150,18 @@ class CardActionsScreen(Screen):
         else:
             store.save_draft("desc", card.id, "")
             self.notify("Description saved")
+
+    async def attach_for_text(self, card: Card, path: Path) -> str:
+        """Upload the file to the card, as trello.com does for a file added to a comment, and return a Markdown
+        link to it."""
+        attachment = await self.app.store.attach_file(card.id, path)
+        self.notify(f"Attached {attachment.name} to the card")
+        name = attachment.name.replace("[", "(").replace("]", ")")
+        return f"[{name}]({attachment.url})"
+
+    def action_attachments(self) -> None:
+        if card := self.current_card():
+            self.app.push_screen(AttachmentPickerScreen(card.id))
 
     def action_labels(self) -> None:
         if card := self.current_card():

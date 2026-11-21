@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import httpx
 
+from tui_trello.auth import TokenAuth
 from tui_trello.backend import BackendError
 from tui_trello.models import (
+    Attachment,
     Board,
     BoardSnapshot,
     Card,
@@ -28,18 +32,24 @@ API_ROOT = "https://api.trello.com/1"
 
 CHECK_ITEM_FIELDS = "name,state,pos"
 
+ATTACHMENT_FIELDS = "name,url,isUpload,bytes,mimeType,date,fileName"
+
 CARD_FIELDS = "name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges"
 
 
 class TrelloBackend:
     def __init__(self, auth: httpx.Auth, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         """`auth` comes from `tui_trello.auth.request_auth`: `OAuth2Auth`, or `TokenAuth` after `login --token`."""
+        self._auth = auth
         self._http = httpx.AsyncClient(base_url=API_ROOT, auth=auth, timeout=20, transport=transport)
 
-    async def _request(self, method: str, path: str, *, body: dict[str, Any] | None = None, **params: Any) -> Any:
-        """`params` go in the query string; `body` is sent as JSON, for text too long for a URL."""
+    async def _request(self, method: str, path: str, *, body: dict[str, Any] | None = None,
+                       files: dict[str, Any] | None = None, **params: Any) -> Any:
+        """`params` go in the query string; `body` is sent as JSON, for text too long for a URL; `files` as a
+        multipart upload, given longer to send."""
+        timeout = httpx.Timeout(20, write=600) if files else httpx.USE_CLIENT_DEFAULT
         try:
-            response = await self._http.request(method, path, params=params, json=body)
+            response = await self._http.request(method, path, params=params, json=body, files=files, timeout=timeout)
         except httpx.HTTPError as exc:
             raise BackendError(f"Could not reach Trello: {exc}") from exc
         if response.status_code in (400, 401) and "invalid key" in response.text:
@@ -158,6 +168,50 @@ class TrelloBackend:
 
     async def create_checklist(self, card_id: str, name: str) -> Checklist:
         return Checklist.from_api(await self._request("POST", f"/cards/{card_id}/checklists", name=name))
+
+    async def attachments(self, card_id: str) -> list[Attachment]:
+        data = await self._request("GET", f"/cards/{card_id}/attachments", fields=ATTACHMENT_FIELDS)
+        return [Attachment.from_api(a) for a in data]
+
+    async def attach_file(self, card_id: str, path: Path) -> Attachment:
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise BackendError(f"Could not read {path}: {exc.strerror}") from exc
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        data = await self._request("POST", f"/cards/{card_id}/attachments", files={"file": (path.name, content, mime)},
+                                   name=path.name, mimeType=mime)
+        return Attachment.from_api(data)
+
+    async def attach_link(self, card_id: str, url: str, name: str = "") -> Attachment:
+        params = {"url": url, **({"name": name} if name else {})}
+        return Attachment.from_api(await self._request("POST", f"/cards/{card_id}/attachments", **params))
+
+    async def download_attachment(self, attachment: Attachment, dest: Path) -> None:
+        """Save an uploaded file. Trello's download links take the older key and token, in an OAuth header; no
+        OAuth 2.0 scope covers them, so with the browser login they answer 401."""
+        headers = {}
+        if isinstance(self._auth, TokenAuth):
+            key, token = self._auth.params["key"], self._auth.params["token"]
+            headers["Authorization"] = f'OAuth oauth_consumer_key="{key}", oauth_token="{token}"'
+        try:
+            async with self._http.stream("GET", attachment.url, headers=headers, timeout=httpx.Timeout(20, read=600),
+                                         follow_redirects=True) as response:
+                if response.status_code in (401, 403):
+                    raise BackendError("Trello doesn't let the browser login download attachments. Open it in the "
+                                       "web browser instead (enter), or log in with `tui-trello login --token` to "
+                                       "save files from the app.")
+                if response.is_error:
+                    raise BackendError(f"Trello returned {response.status_code} for {attachment.name}")
+                with dest.open("wb") as out:
+                    async for chunk in response.aiter_bytes():
+                        out.write(chunk)
+        except httpx.HTTPError as exc:
+            dest.unlink(missing_ok=True)
+            raise BackendError(f"Could not download {attachment.name}: {exc}") from exc
+        except BaseException:
+            dest.unlink(missing_ok=True)  # no half-written file left behind
+            raise
 
     async def notifications(self) -> list[Notification]:
         data = await self._request("GET", "/members/me/notifications", limit=50, fields="type,unread,date,data",

@@ -86,6 +86,22 @@ Drafts live in `~/.local/state/tui-trello/drafts.json` (`$XDG_STATE_HOME`), read
 tui-trello sees them: Trello's API has no drafts, so they don't appear on trello.com or in Trello's apps. If someone
 changes a description on Trello while you have a draft of it, the editor says so before you save over it.
 
+## Attachments
+
+A card's files and links are listed in its details, and the 📎 badge counts them. `a` opens the list:
+
+- enter opens the highlighted one in your web browser. For a file, trello.com shows or downloads it there, as you
+  are logged in.
+- `ctrl+s` saves a file to your downloads folder (`$XDG_DOWNLOAD_DIR`, else `~/Downloads`), adding ` (1)` to the
+  name if it's taken. Trello only lets the app download files if you logged in with `tui-trello login --token`; with
+  the browser login (no OAuth 2.0 permission covers downloads) use enter instead.
+- `ctrl+y` copies the link.
+- "attach a file…" browses for a file to upload: enter goes into a folder or picks a file, typing filters, and
+  typing a path (`~/report.pdf`) goes straight to it. Typing or pasting a URL offers to attach it as a link.
+
+Trello has no attachments on comments as such: adding a file while writing a comment uploads it to the card, and the
+comment links to it. `ctrl+o` in the comment or description editor does the same, putting the link in at the cursor.
+
 ## Reactions and links
 
 `R` reacts to a comment: pick the comment, then an emoji. Picking one you've already given takes it off. A comment's
@@ -131,6 +147,9 @@ Vim-style throughout; `?` shows them all in the app.
 | `e`                    | edit the description (enter new line, ctrl+s saves)                                |
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |
 | `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
+| `a`                    | attachments: enter opens one in the browser, `ctrl+s` saves it to Downloads,       |
+|                        | `ctrl+y` copies its link; attach a file, or paste a URL to attach a link           |
+| `ctrl+o`               | in a comment or description: attach a file and put its link in                     |
 | `R`                    | react to a comment: pick the comment, then an emoji; picking yours takes it off    |
 | `y` `Y`                | copy the link to the card, to one of its comments                                  |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |

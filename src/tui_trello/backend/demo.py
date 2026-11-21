@@ -6,9 +6,11 @@ import itertools
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from tui_trello.backend import BackendError
 from tui_trello.models import (
+    Attachment,
     Board,
     BoardSnapshot,
     Card,
@@ -127,6 +129,13 @@ CHECK_ITEMS = ["Write the tests", "Update the `README.md`", "Try it on a real bo
                "Check the Arabic board", "Take **new** screenshots"]
 ARABIC_CHECK_ITEMS = ["الاختبار في Chrome", "الاختبار على الجوال", "تحديث التوثيق", "طلب مراجعة الكود"]
 
+# Attachments on sample cards, by card name: (name, link or None for an upload, the upload's content).
+ATTACHMENTS = {
+    "Move cards between lists": [("picker-sketch.png", None, b"\x89PNG\r\n\x1a\n sketch"),
+                                 ("Pull request #42", "https://example.com/pr/42", b"")],
+    "Token stored in plain text in config": [("config-dump.txt", None, b"token = 'redacted'\n")],
+}
+
 # Who reacted to the sample comments, by the comment's place in COMMENTS / ARABIC_COMMENTS.
 COMMENT_REACTIONS = {0: [("m3", "+1")], 3: [("m1", "tada"), ("m3", "tada"), ("m2", "+1")]}
 
@@ -157,6 +166,8 @@ class DemoBackend:
         self._boards: dict[str, BoardSnapshot] = {}
         self._comments: dict[str, list[Comment]] = {}
         self._checklists: dict[str, list[Checklist]] = {}
+        self._attachments: dict[str, list[Attachment]] = {}
+        self._files: dict[str, bytes] = {}  # uploads' content, by attachment id
         for board_id, name, starred, layout in [
             ("b-product", "Product roadmap", True, PRODUCT_BOARD),
             ("b-home", "Home", False, HOME_BOARD),
@@ -199,6 +210,7 @@ class DemoBackend:
                     for i, (author, text) in enumerate((ARABIC_COMMENTS if rtl else COMMENTS)[:comments])
                 ]
                 self._checklists[card_id] = self._checklist(checklist, rtl)
+                self._attachments[card_id] = [self._attachment(card_id, *spec) for spec in ATTACHMENTS.get(name, ())]
                 cards.append(Card(
                     id=card_id,
                     name=name,
@@ -214,6 +226,7 @@ class DemoBackend:
                     last_activity=NOW - timedelta(days=card_pos),
                     comment_count=comments,
                     checklist=checklist,
+                    attachment_count=len(self._attachments[card_id]),
                 ))
         return BoardSnapshot(board, lists, cards, dict(MEMBERS), list(labels_by_key.values()))
 
@@ -225,6 +238,14 @@ class DemoBackend:
         names = ARABIC_CHECK_ITEMS if rtl else CHECK_ITEMS
         items = tuple(CheckItem(next(self._ids), names[n % len(names)], n < checked, n) for n in range(total))
         return [Checklist(next(self._ids), "المهام" if rtl else "Tasks", items)]
+
+    def _attachment(self, card_id: str, name: str, link: str | None, content: bytes) -> Attachment:
+        attachment_id = next(self._ids)
+        if link:
+            return Attachment(attachment_id, name, link, is_upload=False, date=NOW)
+        self._files[attachment_id] = content
+        return Attachment(attachment_id, name, f"https://trello.example/1/cards/{card_id}/attachments/{attachment_id}"
+                          f"/download/{name}", is_upload=True, size=len(content), date=NOW, file_name=name)
 
     def _reaction(self, member_id: str, short_name: str) -> Reaction:
         native = next(native for name, native, _ in REACTIONS if name == short_name)
@@ -283,6 +304,28 @@ class DemoBackend:
 
     async def me(self) -> Member:
         return MEMBERS[ME]
+
+    async def attachments(self, card_id: str) -> list[Attachment]:
+        return list(self._attachments.get(card_id, []))
+
+    async def attach_file(self, card_id: str, path: Path) -> Attachment:
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise BackendError(f"Could not read {path}: {exc.strerror}") from exc
+        return self._attach(card_id, self._attachment(card_id, path.name, None, content))
+
+    async def attach_link(self, card_id: str, url: str, name: str = "") -> Attachment:
+        return self._attach(card_id, self._attachment(card_id, name or url, url, b""))
+
+    def _attach(self, card_id: str, attachment: Attachment) -> Attachment:
+        self._attachments.setdefault(card_id, []).append(attachment)
+        snapshot, card = self._find(card_id)
+        snapshot.replace_card(replace(card, attachment_count=len(self._attachments[card_id])))
+        return attachment
+
+    async def download_attachment(self, attachment: Attachment, dest: Path) -> None:
+        dest.write_bytes(self._files[attachment.id])
 
     async def add_reaction(self, comment_id: str, short_name: str) -> Reaction:
         reaction = self._reaction(ME, short_name)

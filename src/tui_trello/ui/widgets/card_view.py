@@ -1,4 +1,4 @@
-"""A card's details: header, description, checklists and comments. Used as the browser's preview pane and the card screen."""
+"""A card's details: header, description, attachments, checklists and comments. Used as the browser's preview pane and the card screen."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from tui_trello.backend import BackendError
-from tui_trello.models import Card, CardContext, Checklist
+from tui_trello.models import Attachment, Card, CardContext, Checklist
 from tui_trello.ui import markdown, render
 from tui_trello.ui.bidi import BidiText, visual
+from tui_trello.ui.screens.picker import attachment_hint, attachment_marker
 
 
 class CardView(VerticalScroll):
@@ -24,8 +25,9 @@ class CardView(VerticalScroll):
     CardView .section { text-style: bold; color: $text-muted; border-bottom: solid $panel-lighten-2; }
     CardView #card-desc { margin-bottom: 1; }
     CardView #card-comments { margin-bottom: 1; min-height: 1; }
-    CardView .checklists { display: none; }
-    CardView .checklists.visible { display: block; }
+    CardView .checklists, CardView .attachments { display: none; }
+    CardView .checklists.visible, CardView .attachments.visible { display: block; }
+    CardView #card-attachments { margin-bottom: 1; }
     CardView #card-checklists { margin-bottom: 1; }
     """
 
@@ -56,6 +58,8 @@ class CardView(VerticalScroll):
         yield Static(id="card-meta")
         yield Static("Description", classes="section")
         yield Static(id="card-desc")
+        yield Static("Attachments", classes="section attachments")
+        yield Static(id="card-attachments", classes="attachments")
         yield Static("Checklists", classes="section checklists")
         yield Static(id="card-checklists", classes="checklists")
         yield Static("Comments", classes="section")
@@ -68,6 +72,7 @@ class CardView(VerticalScroll):
             self.query_one("#card-title", Static).update(Text("No card selected", style="dim"))
             self.query_one("#card-meta", Static).update("")
             self.show_description("")
+            self.show_attachments([])
             self.show_checklists([])
             self.query_one("#card-comments", Static).update("")
             return
@@ -76,6 +81,10 @@ class CardView(VerticalScroll):
         self.show_description(card.desc)
         self.query_one("#card-comments", Static).update("")  # the top bar's spinner shows comments loading
         self.load_comments(card)
+        if card.attachment_count or self.app.store.has_attachments(card.id):
+            self.load_attachments(card)
+        else:
+            self.show_attachments([])
         if card.checklist[1] or self.app.store.has_checklists(card.id):
             self.load_checklists(card)
         else:
@@ -114,6 +123,25 @@ class CardView(VerticalScroll):
                     if item.checked else Text.assemble(("☐ ", "dim"), markdown.inline(item.name))))
             parts.append(Text(""))
         self.query_one("#card-checklists", Static).update(Group(*parts[:-1]))
+
+    def show_attachments(self, attachments: list[Attachment]) -> None:
+        self.query(".attachments").set_class(bool(attachments), "visible")
+        rows = [Text.assemble(attachment_marker(a), visual(a.name), ("  " + attachment_hint(a), "dim"))
+                for a in attachments]
+        if rows:
+            rows.append(Text("a: open, save or add", style="dim"))
+        self.query_one("#card-attachments", Static).update(Group(*rows))
+
+    @work(exclusive=True, group="attachments")
+    async def load_attachments(self, card: Card) -> None:
+        try:
+            attachments = await self.app.store.attachments(card.id)
+        except BackendError as exc:
+            self.query(".attachments").add_class("visible")
+            self.query_one("#card-attachments", Static).update(Text(str(exc), style="red"))
+            return
+        if self.card is not None and self.card.id == card.id:
+            self.show_attachments(attachments)
 
     @work(exclusive=True, group="checklists")
     async def load_checklists(self, card: Card) -> None:

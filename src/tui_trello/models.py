@@ -102,6 +102,7 @@ class Card:
     last_activity: datetime | None = None
     comment_count: int = 0
     checklist: tuple[int, int] = (0, 0)  # (checked, total)
+    attachment_count: int = 0
 
     def comment_url(self, comment_id: str) -> str:
         """A link straight to one of the card's comments, as trello.com's "Copy link" on a comment gives."""
@@ -128,7 +129,29 @@ class Card:
             last_activity=_parse_date(data.get("dateLastActivity")),
             comment_count=badges.get("comments", 0),
             checklist=(badges.get("checkItemsChecked", 0), badges.get("checkItems", 0)),
+            attachment_count=badges.get("attachments", 0),
         )
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """A file uploaded to a card, or a link attached to it."""
+
+    id: str
+    name: str
+    url: str
+    is_upload: bool
+    size: int = 0  # bytes; 0 for links
+    mime_type: str = ""
+    date: datetime | None = None
+    file_name: str = ""  # an upload's file name, which `name` may have been renamed from
+
+    @classmethod
+    def from_api(cls, data: dict[str, Any]) -> Attachment:
+        return cls(id=data["id"], name=data.get("name") or data.get("fileName") or data.get("url", ""),
+                   url=data.get("url", ""), is_upload=data.get("isUpload", False), size=data.get("bytes") or 0,
+                   mime_type=data.get("mimeType") or "", date=_parse_date(data.get("date")),
+                   file_name=data.get("fileName") or "")
 
 
 @dataclass(frozen=True)

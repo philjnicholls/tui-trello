@@ -53,6 +53,8 @@ def badges(card: Card, now: datetime | None = None, *, due: bool = True, unread:
     checked, total = card.checklist
     if total:
         parts.append(f"☑{checked}/{total} ", style="green" if checked == total else "dim")
+    if card.attachment_count:
+        parts.append(f"📎{card.attachment_count} ", style="dim")
     if due:
         parts.append_text(due_text(card, now))
     return parts
