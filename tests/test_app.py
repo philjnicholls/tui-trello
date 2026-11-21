@@ -23,6 +23,8 @@ from tui_trello.ui.screens.picker import (
     PickerScreen,
 )
 from tui_trello.ui.screens.triage import TriageScreen
+from tui_trello.ui.tips import TIPS
+from tui_trello.ui.widgets.card_view import CardView
 from tui_trello.ui.widgets.spinner import Spinner
 
 
@@ -364,16 +366,22 @@ async def test_notifications(app) -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
         assert app.store.unread_count == 3
-        assert "● 3 unread" in screen_lines(app)[0]  # the bell in the browser's top bar
+        assert "🔔 3 unread" in screen_lines(app)[0]  # the bell in the browser's top bar
         await pilot.press("4")
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, NotificationsScreen)
         lines = "\n".join(screen_lines(app))
         assert "Grace Hopper mentioned you on Move cards between lists" in lines
-        assert "Alan Turing moved Show comments on card detail to Done" in lines
-        await pilot.press("u")
+        assert "Alan Turing moved" not in lines  # read: hidden at first
         assert len(screen.shown) == 3
+        await pilot.press("u")
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "Alan Turing moved Show comments on card detail to Done" in lines
+        assert "Alan Turing reacted 🎉 to your comment on Split backend from UI" in lines
+        await pilot.press("u")
+        await pilot.pause()
         await pilot.press("d")
         await pilot.pause()
         assert app.store.unread_count == 2
@@ -381,7 +389,7 @@ async def test_notifications(app) -> None:
         await pilot.press("D")
         await pilot.pause()
         assert app.store.unread_count == 0
-        assert "●" not in "\n".join(screen_lines(app))  # no bell, no unread dots
+        assert "●" not in "\n".join(screen_lines(app)) and "🔔" not in "\n".join(screen_lines(app))
         assert "Nothing unread" in "\n".join(screen_lines(app))
 
 
@@ -409,7 +417,7 @@ async def test_open_notification_loads_its_board(app) -> None:
         await pilot.pause()
         await pilot.press("4")
         await pilot.pause()
-        await pilot.press("G", "enter")  # the Arabic board's card, which isn't loaded
+        await pilot.press("u", "G", "enter")  # the Arabic board's card, read, and on a board that isn't loaded
         await pilot.pause()
         assert isinstance(app.screen, CardScreen)
         assert app.store.snapshot.board.id == "b-arabic"
@@ -450,7 +458,83 @@ async def test_react_to_a_comment(app) -> None:
         await pilot.pause()
         comment = next(c for c in await app.store.comments(card.id) if c.text == "Looks good to me.")
         assert ("rocket", "🚀", 1, True) in comment.reaction_counts("m1")
-        assert "🚀 1" in "\n".join(screen_lines(app))  # in the preview
+        assert "🚀 you" in "\n".join(screen_lines(app))  # in the preview, with who gave it
+
+
+async def test_reply_to_a_comment(app) -> None:
+    async with app.run_test(size=(120, 80)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "j", "j", "l")  # Review: Split backend from UI, four comments
+        card = app.screen.current_card()
+        await pilot.press("C", *"looks good", "enter")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "> Looks good to me.\n\n@grace "
+        await pilot.press(*"thanks", "enter")
+        await pilot.pause()
+        assert (await app.store.comments(card.id))[0].text == "> Looks good to me.\n\n@grace thanks"
+
+
+async def test_reply_to_a_long_comment_picks_what_to_quote(app) -> None:
+    async with app.run_test(size=(120, 80)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        long = "The picker is slow on big boards. " * 10
+        await app.store.add_comment(card.id, f"{long.strip()}\n\nCan we cache the lists?")
+        await pilot.press("c", *"draft", "escape")  # an unsent comment stays, with the quote after it
+        await pilot.pause()
+        await pilot.press("C", "enter")  # the newest comment, mine
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+        await pilot.press(*"cache", "enter")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "draft\n\n> Can we cache the lists?\n\n"
+
+
+async def test_reply_from_notifications(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("4")
+        await pilot.pause()
+        await pilot.press("C")  # Grace's mention, the newest
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "> @ada can you check the picker remembers the last list?\n\n@grace "
+        await pilot.press(*"yes", "enter")
+        await pilot.pause()
+        card_id = app.store.notifications[0].card_id
+        assert (await app.store.comments(card_id))[0].text.endswith("@grace yes")
+        await pilot.press("j", "C")  # added to a card: nothing to reply to
+        await pilot.pause()
+        assert isinstance(app.screen, NotificationsScreen)
+
+
+async def test_hiding_read_notifications_is_remembered(backend, state_dir) -> None:
+    app = TrelloApp(backend, Settings(default_board="b-product", layout="notifications"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert len(app.screen.shown) == 3
+        await pilot.press("u")
+        await pilot.pause()
+        assert len(app.screen.shown) == 7
+    app = TrelloApp(backend, Settings(default_board="b-product", layout="notifications"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert len(app.screen.shown) == 7  # still showing read ones, after a restart
+        assert (state_dir / "tui-trello" / "prefs.json").exists()
+
+
+async def test_tip_when_there_is_no_card(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        view = app.screen.query_one(CardView)
+        assert not view.has_class("empty")
+        view.show(None, app.store.snapshot)
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "💡 Tip" in lines and "No comments" not in lines and "No description" not in lines
+        tip = view.tip
+        view.next_tip()
+        assert view.tip == (tip + 1) % len(TIPS)
 
 
 async def test_copy_links(app, monkeypatch) -> None:

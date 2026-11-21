@@ -5,6 +5,7 @@ src/tui_trello/
   cli.py              argument parsing; picks a backend; starts the app
   config.py           Settings from env vars and ~/.config/tui-trello/config.toml
   drafts.py           unsent comments and description edits, per card, in ~/.local/state/tui-trello/drafts.json
+  prefs.py            choices the app remembers (hiding read notifications), in ~/.local/state/tui-trello/prefs.json
   auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
   models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Reaction, Attachment,
                       Checklist, CheckItem, Notification;
@@ -13,6 +14,7 @@ src/tui_trello/
   agenda.py           group cards by due date for My work
   files.py            the downloads folder, unique file names, human-readable sizes
   query.py            the card filter language (#label @member list:x !overdue words)
+  quote.py            replies: what of a comment to quote, cut to size, as a block quote and @mention
   store.py            app-wide state: open board, my work, notifications, caches; board_changed, work_changed and
                       notifications_changed signals
   backend/
@@ -27,17 +29,18 @@ src/tui_trello/
     markdown.py       Markdown in descriptions, comments and checklists as styled, RTL-aware text
     desktop.py        desktop notifications: notify-send, or the terminal's OSC 777 / OSC 9
     clipboard.py      copying links: wl-copy, xclip, xsel or pbcopy, or the terminal's OSC 52
+    tips.py           the tips the card pane shows while there is no card
     widgets/
-      card_view.py    card header, description, attachments, checklists, comments
+      card_view.py    card header, description, attachments, checklists, comments; a rotating tip with no card
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
-      bell.py         the top-bar unread-notification count
+      bell.py         the top-bar unread-notification count (a red 🔔)
     screens/
       base.py         CardActionsScreen (m, c, e, t, x, a, R, y, Y, o), ListScreen (/ filter), BoardScreen (redraws on
                       board_changed)
       browser.py      Miller columns: lists | cards | preview
       triage.py       sortable, filterable table of every card
       mywork.py       my cards on every board, grouped by due date, with preview
-      notifications.py  Trello's notifications; enter opens the card, d / D mark read
+      notifications.py  Trello's notifications; enter opens the card, d / D mark read, u hides read ones, C replies
       card.py         full-screen card
       keys.py         the ? key reference
       picker.py       PickerScreen (fuzzy choose one), its label, checklist, attachment and file

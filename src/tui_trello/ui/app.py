@@ -23,6 +23,7 @@ from textual.widgets import Input, TextArea
 from tui_trello.backend import Backend, BackendError
 from tui_trello.config import Settings
 from tui_trello.drafts import Drafts
+from tui_trello.prefs import Prefs
 from tui_trello.store import Store
 from tui_trello.models import Notification
 from tui_trello.ui import desktop, keys_compat, render
@@ -108,9 +109,11 @@ class TrelloApp(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, backend: Backend, settings: Settings, drafts: Drafts | None = None) -> None:
+    def __init__(self, backend: Backend, settings: Settings, drafts: Drafts | None = None,
+                 prefs: Prefs | None = None) -> None:
         super().__init__(ansi_color=settings.transparent)
         self.settings = settings
+        self.prefs = prefs or Prefs()
         self.store = Store(self, backend, drafts)
         self.pending_chord = ""
 

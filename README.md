@@ -102,10 +102,17 @@ A card's files and links are listed in its details, and the 📎 badge counts th
 Trello has no attachments on comments as such: adding a file while writing a comment uploads it to the card, and the
 comment links to it. `ctrl+o` in the comment or description editor does the same, putting the link in at the cursor.
 
-## Reactions and links
+## Replies, reactions and links
+
+Trello comments have no threads, so a reply is a new comment that starts with the one it answers as a quote and
+@mentions its author. `C` picks the comment and opens the comment editor with the quote in, ready to type after the
+mention; edit or cut the quote as you like. A comment longer than about 280 characters or 6 lines isn't quoted whole:
+pick its start, cut at a word, or one of its paragraphs (lines or sentences, in a one-paragraph comment). Quotes in
+the comment itself, from an earlier reply, are left out. An unsent comment on the card stays, with the quote after it.
+`C` in Notifications replies to the comment a mention or comment notification is about, the same way.
 
 `R` reacts to a comment: pick the comment, then an emoji. Picking one you've already given takes it off. A comment's
-reactions show under it, with yours highlighted.
+reactions show under it, each emoji with who gave it (a count, past three people), yours highlighted.
 
 `y` copies the link to the card; `Y` picks a comment and copies the link to it. On a local desktop the link goes
 through `wl-copy`, `xclip`, `xsel` or `pbcopy`, whichever is installed. Elsewhere, over SSH for instance, the app asks
@@ -114,10 +121,12 @@ the terminal to copy it (OSC 52); most terminals do, but GNOME Terminal and othe
 ## Notifications
 
 The app checks Trello for new notifications every minute while it runs. Each new one pops up in the corner and as a
-desktop notification, and the top bar of every view shows how many are unread. Boards in the picker, lists and cards
-show a `●` with the number of unread notifications about them. `4` lists them, newest first: enter
-opens the card (loading its board if need be) and marks the card's notifications read, `d` marks one read without
-opening it, `D` marks them all, `u` shows only the unread ones.
+desktop notification, and the top bar of every view shows how many are unread with a red 🔔. Boards in the picker,
+lists and cards show a red `●` with the number of unread notifications about them. `4` lists them, newest first:
+enter opens the card (loading its board if need be) and marks the card's notifications read, `d` marks one read
+without opening it, `D` marks them all, `C` replies to a comment. A reaction to one of your comments says which
+emoji it was. Read notifications are hidden; `u` shows or hides them, and the app remembers your choice (in
+`~/.local/state/tui-trello/prefs.json`).
 
 Desktop notifications go through `notify-send` on a local Linux desktop. Elsewhere, over SSH for instance, the app
 asks the terminal to show one (OSC 777 or OSC 9); GNOME Terminal, Ptyxis, foot, iTerm2, WezTerm, Ghostty, kitty and
@@ -150,11 +159,13 @@ Vim-style throughout; `?` shows them all in the app.
 | `a`                    | attachments: enter opens one in the browser, `ctrl+s` saves it to Downloads,       |
 |                        | `ctrl+y` copies its link; attach a file, or paste a URL to attach a link           |
 | `ctrl+o`               | in a comment or description: attach a file and put its link in                     |
+| `C`                    | reply to a comment (on a card or in notifications): a new comment quoting it and   |
+|                        | @mentioning its author                                                             |
 | `R`                    | react to a comment: pick the comment, then an emoji; picking yours takes it off    |
 | `y` `Y`                | copy the link to the card, to one of its comments                                  |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |
 | `p`                    | my work: toggle the preview                                                        |
-| `d` `D` `u`            | notifications: mark read, mark all read, unread only                               |
+| `d` `D` `u`            | notifications: mark read, mark all read, show or hide read ones (remembered)       |
 | `r`                    | reload                                                                             |
 | `ctrl+j` `ctrl+k`      | down, up in a picker (typing filters it)                                           |
 | `q` / `esc`            | quit / back                                                                        |

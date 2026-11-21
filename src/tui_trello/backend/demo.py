@@ -155,6 +155,7 @@ NOTIFICATIONS = [
     ("addedToCard", "Alan Turing", "Token stored in plain text in config", 3, True, ""),
     ("cardDueSoon", "", "Move cards between lists", 5, True, ""),
     ("commentCard", "Grace Hopper", "Split backend from UI", 26, False, "Looks good to me."),
+    ("reactionAdded", "Alan Turing", "Split backend from UI", 30, False, "Pushed the split: screens use the store."),
     ("changeCard", "Alan Turing", "Show comments on card detail", 50, False, "Done"),
     ("mentionedOnCard", "ليلى حداد", "إصلاح خطأ في نموذج التسجيل (عاجل)", 70, False, "@ada جربت في Chrome، والمشكلة ما زالت قائمة."),
 ]
@@ -186,7 +187,10 @@ class DemoBackend:
         return Notification(next(self._ids), kind, unread, date or datetime.now(timezone.utc), creator, card.id,
                             card.name, snapshot.board.id, snapshot.board.name,
                             list_name=extra if kind == "changeCard" else "",
-                            text=extra if kind in ("commentCard", "mentionedOnCard") else "")
+                            text=extra if kind in ("commentCard", "mentionedOnCard", "reactionAdded") else "",
+                            creator_username=next((m.username for m in MEMBERS.values() if m.full_name == creator),
+                                                  ""),
+                            reactions=("🎉",) if kind == "reactionAdded" else ())
 
     def push_notification(self, notification: Notification) -> None:
         """Something happened on Trello: the next `notifications()` call returns it first (tests)."""
@@ -206,7 +210,8 @@ class DemoBackend:
                 card_id = next(self._ids)
                 self._comments[card_id] = [
                     Comment(next(self._ids), author, text, NOW - timedelta(hours=3 * i),
-                            tuple(self._reaction(member, emoji) for member, emoji in COMMENT_REACTIONS.get(i, ())))
+                            tuple(self._reaction(member, emoji) for member, emoji in COMMENT_REACTIONS.get(i, ())),
+                            next((m.username for m in MEMBERS.values() if m.full_name == author), ""))
                     for i, (author, text) in enumerate((ARABIC_COMMENTS if rtl else COMMENTS)[:comments])
                 ]
                 self._checklists[card_id] = self._checklist(checklist, rtl)

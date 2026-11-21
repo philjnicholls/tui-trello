@@ -198,15 +198,18 @@ class Comment:
     text: str
     date: datetime | None
     reactions: tuple[Reaction, ...] = ()
+    author_username: str = ""  # for an @mention in a reply
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> Comment:
+        creator = data.get("memberCreator") or {}
         return cls(
             id=data["id"],
-            author=(data.get("memberCreator") or {}).get("fullName", "?"),
+            author=creator.get("fullName", "?"),
             text=data["data"]["text"],
             date=_parse_date(data.get("date")),
             reactions=tuple(Reaction.from_api(r) for r in data.get("reactions") or ()),
+            author_username=creator.get("username") or "",
         )
 
     def mine(self, short_name: str, member_id: str) -> Reaction | None:
@@ -219,6 +222,11 @@ class Comment:
             _, native, n, mine = counts.get(r.short_name, (r.short_name, r.native, 0, False))
             counts[r.short_name] = (r.short_name, native, n + 1, mine or r.member_id == member_id)
         return list(counts.values())
+
+    def reactors(self, short_name: str, member_id: str = "") -> list[str]:
+        """Who gave the reaction, in order, with "you" for `member_id`."""
+        return ["you" if r.member_id == member_id else r.member_name or "?" for r in self.reactions
+                if r.short_name == short_name]
 
 
 @dataclass(frozen=True)
@@ -271,24 +279,37 @@ class Notification:
     board_id: str = ""
     board_name: str = ""
     list_name: str = ""  # where a card was moved to (changeCard)
-    text: str = ""  # the comment, for commentCard and mentionedOnCard
+    text: str = ""  # the comment, for commentCard and mentionedOnCard; the one reacted to, for reactionAdded
+    creator_username: str = ""
+    reactions: tuple[str, ...] = ()  # the emoji the creator put on the comment, for reactionAdded
+
+    @property
+    def is_comment(self) -> bool:
+        """About someone's comment on a card, which can be replied to."""
+        return self.type in ("commentCard", "mentionedOnCard") and bool(self.card_id and self.text)
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> Notification:
         detail = data.get("data") or {}
         card, board = detail.get("card") or {}, detail.get("board") or {}
+        creator = data.get("memberCreator") or {}
+        creator_id = creator.get("id") or data.get("idMemberCreator")
+        # A reactionAdded notification carries the comment's reactions; the creator's are the ones it's about.
+        reactions = [Reaction.from_api(r) for r in data.get("reactions") or ()]
         return cls(
             id=data["id"],
             type=data.get("type") or "",
             unread=data.get("unread", False),
             date=_parse_date(data.get("date")),
-            creator=(data.get("memberCreator") or {}).get("fullName", ""),
+            creator=creator.get("fullName", ""),
             card_id=card.get("id", ""),
             card_name=card.get("name", ""),
             board_id=board.get("id", ""),
             board_name=board.get("name", ""),
             list_name=(detail.get("listAfter") or {}).get("name", ""),
             text=detail.get("text") or "",
+            creator_username=creator.get("username") or "",
+            reactions=tuple(r.native for r in reactions if not creator_id or r.member_id == creator_id),
         )
 
 

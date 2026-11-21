@@ -161,6 +161,7 @@ async def test_notifications() -> None:
     requests: list[httpx.Request] = []
     backend = make_backend(requests)
     mention, board = await backend.notifications()
+    assert "reactions" in requests[-1].url.params["fields"].split(",")  # not sent unless asked for by name
     assert (mention.card_id, mention.board_name, mention.text, mention.unread) == ("c1", "Roadmap", "@ada hi", True)
     assert notification_summary(mention) == "Grace Hopper mentioned you on Card"
     assert notification_summary(board) == "Alan Turing added you to the board Roadmap"

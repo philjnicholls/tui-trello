@@ -1,7 +1,7 @@
 """Behaviour shared by the screens.
 
 - :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist,
-  attachments, react to a comment, copy a link, open in browser). A new card feature
+  attachments, reply or react to a comment, copy a link, open in browser). A new card feature
   (archive, assign, label, due date, ...) is added here once, as a binding plus an action, and works in every view.
   Subclasses only say which card is current.
 - :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`.
@@ -25,6 +25,7 @@ from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Input
 
+from tui_trello import quote
 from tui_trello.backend import BackendError
 from tui_trello.models import REACTIONS, BoardSnapshot, Card, Comment
 from tui_trello.query import CardQuery
@@ -61,6 +62,7 @@ class CardActionsScreen(Screen):
         Binding("t", "labels", "Labels"),
         Binding("x", "checklist", "Checklist"),
         Binding("a", "attachments", "Attachments", show=False),
+        Binding("C", "reply", "Reply", show=False),
         Binding("R", "react", "React", show=False),
         Binding("y", "copy_link", "Copy link", show=False),
         Binding("Y", "copy_comment_link", "Copy comment link", show=False),
@@ -96,25 +98,8 @@ class CardActionsScreen(Screen):
 
     @work
     async def action_comment(self) -> None:
-        card = self.current_card()
-        if not card:
-            return
-        store, board_id = self.app.store, card.board_id
-        draft = store.draft("comment", card.id)
-        text = await self.app.push_screen_wait(TextPromptScreen(
-            f"Comment on “{card.name}”", mentions=lambda: store.members(board_id),
-            text=draft.text if draft else "", notice="Your unsent comment" if draft else "",
-            on_change=lambda text: store.save_draft("comment", card.id, text),
-            attach=lambda path: self.attach_for_text(card, path)))
-        if not text:
-            return
-        try:
-            await store.add_comment(card.id, text)
-        except BackendError as exc:
-            self.notify(f"{exc} The comment is kept as a draft: c to try again.", severity="error")
-        else:
-            store.save_draft("comment", card.id, "")
-            self.notify("Comment added")
+        if card := self.current_card():
+            await write_comment(self, card.id, card.board_id, f"Comment on “{card.name}”")
 
     @work
     async def action_edit_description(self) -> None:
@@ -136,7 +121,7 @@ class CardActionsScreen(Screen):
         desc = await self.app.push_screen_wait(TextPromptScreen(
             f"Description of “{card.name}”", mentions=lambda: store.members(board_id), multiline=True,
             text=draft.text if draft else card.desc, notice=notice, on_change=keep,
-            attach=lambda path: self.attach_for_text(card, path)))
+            attach=lambda path: attach_for_text(self, card.id, path)))
         current = store.find_card(card.id) or card
         if desc is None:
             return
@@ -150,14 +135,6 @@ class CardActionsScreen(Screen):
         else:
             store.save_draft("desc", card.id, "")
             self.notify("Description saved")
-
-    async def attach_for_text(self, card: Card, path: Path) -> str:
-        """Upload the file to the card, as trello.com does for a file added to a comment, and return a Markdown
-        link to it."""
-        attachment = await self.app.store.attach_file(card.id, path)
-        self.notify(f"Attached {attachment.name} to the card")
-        name = attachment.name.replace("[", "(").replace("]", ")")
-        return f"[{name}]({attachment.url})"
 
     def action_attachments(self) -> None:
         if card := self.current_card():
@@ -191,6 +168,13 @@ class CardActionsScreen(Screen):
             choices.append(Choice(f"{comment.author}: {text[:60]}{'…' if len(text) > 60 else ''}", comment,
                                   "  ".join(part for part in (when, reactions) if part)))
         return await self.app.push_screen_wait(PickerScreen(title, choices))
+
+    @work
+    async def action_reply(self) -> None:
+        card = self.current_card()
+        if not card or not (comment := await self.pick_comment(card, "Reply to which comment?")):
+            return
+        await reply_to(self, card.id, card.name, card.board_id, comment.author, comment.author_username, comment.text)
 
     @work
     async def action_react(self) -> None:
@@ -235,6 +219,55 @@ class CardActionsScreen(Screen):
     def action_open_in_browser(self) -> None:
         if (card := self.current_card()) and card.url:
             webbrowser.open(card.url)
+
+
+async def write_comment(screen: Screen, card_id: str, board_id: str, title: str, start: str = "") -> None:
+    """Open the comment editor on the card's draft, with `start` (a reply's quote) after it, and send it. The card
+    needn't be on a loaded board (a reply from Notifications)."""
+    store = screen.app.store
+    draft = store.draft("comment", card_id)
+    text = "\n\n".join(part for part in (draft.text.rstrip() if draft else "", start) if part)
+    text = await screen.app.push_screen_wait(TextPromptScreen(
+        title, mentions=lambda: store.members(board_id),
+        text=text, notice="Your unsent comment" if draft else "",
+        on_change=lambda text: store.save_draft("comment", card_id, text),
+        attach=lambda path: attach_for_text(screen, card_id, path)))
+    if not text:
+        return
+    try:
+        await store.add_comment(card_id, text)
+    except BackendError as exc:
+        screen.notify(f"{exc} The comment is kept as a draft: c to try again.", severity="error")
+    else:
+        store.save_draft("comment", card_id, "")
+        screen.notify("Comment added")
+
+
+async def reply_to(screen: Screen, card_id: str, card_name: str, board_id: str, author: str, username: str,
+                   text: str) -> None:
+    """Write a comment quoting `author`'s comment `text` and mentioning them. A long one isn't quoted whole: the
+    user picks its start, cut short, or one of its parts."""
+    text = quote.own_text(text)
+    quoted = text
+    if not quote.fits(text):
+        start = quote.shorten(text)
+        choices = [Choice(" ".join(start.split()), start, "the start")]
+        choices += [Choice(" ".join(part.split()), part) for part in quote.parts(text) if part != start]
+        quoted = await screen.app.push_screen_wait(PickerScreen(f"{author}'s comment is long: quote which part?",
+                                                                choices))
+        if quoted is None:
+            return
+    await write_comment(screen, card_id, board_id, f"Reply to {author} on “{card_name}”",
+                        quote.reply(quoted, username))
+
+
+async def attach_for_text(screen: Screen, card_id: str, path: Path) -> str:
+    """Upload the file to the card, as trello.com does for a file added to a comment, and return a Markdown link to
+    it."""
+    attachment = await screen.app.store.attach_file(card_id, path)
+    screen.notify(f"Attached {attachment.name} to the card")
+    name = attachment.name.replace("[", "(").replace("]", ")")
+    return f"[{name}]({attachment.url})"
 
 
 class ListScreen(CardActionsScreen):

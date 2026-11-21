@@ -16,12 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from tui_trello.config import state_dir
+
 Kind = Literal["comment", "desc"]
 
 
 def drafts_path() -> Path:
-    base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
-    return base / "tui-trello" / "drafts.json"
+    return state_dir() / "drafts.json"
 
 
 @dataclass(frozen=True)

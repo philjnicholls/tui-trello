@@ -1,9 +1,11 @@
-"""The unread-notification count in the top bar: blank when there are none; `4` opens the list."""
+"""The unread-notification count in the top bar, a red bell: blank when there are none; `4` opens the list."""
 
 from __future__ import annotations
 
 from rich.text import Text
 from textual.widgets import Static
+
+from tui_trello.ui.render import BELL_COLOUR
 
 
 class Bell(Static):
@@ -19,4 +21,4 @@ class Bell(Static):
 
     def redraw(self) -> None:
         count = self.app.store.unread_count
-        self.update(Text(f"● {count} unread", style="bold yellow") if count else "")
+        self.update(Text(f"🔔 {count} unread", style=f"bold {BELL_COLOUR}") if count else "")

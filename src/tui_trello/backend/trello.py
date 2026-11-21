@@ -214,7 +214,9 @@ class TrelloBackend:
             raise
 
     async def notifications(self) -> list[Notification]:
-        data = await self._request("GET", "/members/me/notifications", limit=50, fields="type,unread,date,data",
+        # reactions: on a reactionAdded notification, the emoji given. Unlike data, it only comes if named here.
+        data = await self._request("GET", "/members/me/notifications", limit=50,
+                                   fields="type,unread,date,data,idMemberCreator,reactions",
                                    memberCreator_fields="fullName,username")
         return [Notification.from_api(n) for n in data]  # newest first
 

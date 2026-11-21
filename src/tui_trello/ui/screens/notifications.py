@@ -1,5 +1,5 @@
 """Notifications: Trello's bell, newest first. Enter opens the card and marks its notifications read; d marks one,
-D marks them all."""
+D marks them all; C replies to a comment. Read ones are hidden until u shows them, a choice kept between runs."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from tui_trello.backend import BackendError
 from tui_trello.models import Notification
 from tui_trello.ui import render
 from tui_trello.ui.bidi import fit
-from tui_trello.ui.screens.base import TopBar
+from tui_trello.ui.screens.base import TopBar, reply_to
 from tui_trello.ui.widgets.spinner import Spinner
 
 AGO_WIDTH = 4
@@ -38,14 +38,18 @@ class NotificationsScreen(Screen):
         Binding("l,right", "open", "Open", show=False),
         Binding("d", "mark_read", "Mark read"),
         Binding("D", "mark_all_read", "Mark all read"),
-        Binding("u", "toggle_unread", "Unread only"),
+        Binding("u", "toggle_unread", "Show/hide read"),
+        Binding("C", "reply", "Reply"),
     ]
 
     def __init__(self, now: datetime | None = None) -> None:
         super().__init__()
         self.now = now  # fixed in tests and screenshots; the real clock otherwise
-        self.unread_only = False
         self.shown: list[Notification] = []
+
+    @property
+    def unread_only(self) -> bool:
+        return self.app.prefs.hide_read_notifications
 
     def compose(self) -> ComposeResult:
         with TopBar():
@@ -74,7 +78,8 @@ class NotificationsScreen(Screen):
         options = self.query_one("#notifications", OptionList)
         width = options.scrollable_content_region.width
         options.set_options([Option(self.row(n, now, width), id=n.id) for n in self.shown] or [
-            Option(Text("Nothing unread" if self.unread_only else "No notifications", style="dim"), disabled=True)])
+            Option(Text("Nothing unread  (u shows the ones you've read)" if self.unread_only else "No notifications",
+                        style="dim"), disabled=True)])
         ids = [n.id for n in self.shown]
         if current and current.id in ids:
             options.highlighted = ids.index(current.id)
@@ -83,7 +88,7 @@ class NotificationsScreen(Screen):
 
         status = Text.assemble(
             ("Notifications", "bold"), f"  {store.unread_count} unread",
-            ("   unread only", "yellow") if self.unread_only else "",
+            ("   read ones hidden (u shows them)", "dim") if self.unread_only else "",
         )
         self.query_one("#status", Static).update(status)
 
@@ -92,7 +97,7 @@ class NotificationsScreen(Screen):
         """Two lines: what happened and when; then the board and the comment, if there is one. The first is an
         English sentence with names in it, so it reads left to right even when it starts with an Arabic name."""
         summary_width = max(12, width - MARK - AGO_WIDTH - 1)
-        first = Text.assemble(("● " if n.unread else "  ", "bold yellow"),
+        first = Text.assemble(("● " if n.unread else "  ", f"bold {render.BELL_COLOUR}"),
                               fit(Text(render.notification_summary(n), style="bold" if n.unread else ""),
                                   summary_width, rtl=False),
                               " ", (render.ago(n.date, now).rjust(AGO_WIDTH), "dim"))
@@ -175,5 +180,23 @@ class NotificationsScreen(Screen):
             self.notify(str(exc), severity="error")
 
     def action_toggle_unread(self) -> None:
-        self.unread_only = not self.unread_only
+        self.app.prefs.hide_read_notifications = not self.unread_only
+        self.refresh_bindings()
         self.redraw()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "reply":
+            n = self.current()
+            return True if n and n.is_comment else None  # shown greyed out on other notifications
+        return True
+
+    @on(OptionList.OptionHighlighted, "#notifications")
+    def on_highlighted(self) -> None:
+        self.refresh_bindings()
+
+    @work
+    async def action_reply(self) -> None:
+        """Reply to the comment the notification is about, quoting it as `C` on a card does."""
+        if not (n := self.current()) or not n.is_comment:
+            return
+        await reply_to(self, n.card_id, n.card_name, n.board_id, n.creator, n.creator_username, n.text)

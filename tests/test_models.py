@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from tui_trello.models import Attachment, Card, CheckItem, Checklist, Comment, checklist_badge
+from tui_trello.models import Attachment, Card, CheckItem, Checklist, Comment, Notification, checklist_badge
 
 
 def test_card_from_api() -> None:
@@ -53,3 +53,22 @@ def test_checklist_from_api() -> None:
     ticked = checklist.with_item(CheckItem("i2", "Second", checked=True, pos=2))
     added = ticked.with_item(CheckItem("i3", "Third"))
     assert checklist_badge([added, Checklist("cl2", "Empty")]) == (2, 3)
+
+
+def test_comment_from_api_keeps_the_username() -> None:
+    comment = Comment.from_api({"id": "a1", "data": {"text": "hi"},
+                                "memberCreator": {"fullName": "Grace Hopper", "username": "grace"}})
+    assert (comment.author, comment.author_username) == ("Grace Hopper", "grace")
+
+
+def test_reaction_notification_from_api() -> None:
+    """The reactions come with every reaction on the comment; the notification is about its creator's."""
+    emoji = {"unified": "1F64F", "native": "🙏", "shortName": "pray"}
+    n = Notification.from_api({
+        "id": "n1", "type": "reactionAdded", "unread": True, "date": "2026-11-19T11:26:59.413Z",
+        "idMemberCreator": "m2", "memberCreator": {"id": "m2", "fullName": "Grace Hopper", "username": "grace"},
+        "data": {"card": {"id": "c1", "name": "Plan"}, "board": {"id": "b1", "name": "Dev"}, "text": "Ship it?"},
+        "reactions": [{"id": "r1", "idMember": "m2", "emoji": emoji},
+                      {"id": "r2", "idMember": "m3", "emoji": {**emoji, "native": "👍", "shortName": "+1"}}],
+    })
+    assert (n.reactions, n.creator_username, n.is_comment) == (("🙏",), "grace", False)

@@ -10,6 +10,8 @@ from rich.text import Text
 from tui_trello.models import Card, CardContext, Label, Notification
 from tui_trello.ui.bidi import BidiText, visual
 
+BELL_COLOUR = "red"  # the top bar's 🔔 and every unread mark
+
 
 def label_chips(labels: tuple[Label, ...] | list[Label]) -> Text:
     text = Text()
@@ -40,7 +42,7 @@ def due_text(card: Card, now: datetime | None = None) -> Text:
 
 def unread_badge(count: int) -> Text:
     """Unread notifications on a board, list or card, in the bell's colour; blank for none."""
-    return Text(f"●{count}", style="bold yellow") if count else Text("")
+    return Text(f"●{count}", style=f"bold {BELL_COLOUR}") if count else Text("")
 
 
 def badges(card: Card, now: datetime | None = None, *, due: bool = True, unread: int = 0) -> Text:
@@ -86,7 +88,7 @@ NOTIFICATION_VERBS = {
     "removedFromCard": "removed you from",
     "changeCard": "moved",
     "createdCard": "created",
-    "addedAttachmentToCard": "attached a file to",
+    "addAttachmentToCard": "attached a file to",
     "updateCheckItemStateOnCard": "ticked an item on",
     "addedToBoard": "added you to the board",
     "addAdminToBoard": "made you an admin of the board",
@@ -101,6 +103,9 @@ def notification_summary(notification: Notification) -> str:
     n = notification
     if n.type == "cardDueSoon":
         return f"{n.card_name} is due soon"
+    if n.type == "reactionAdded":
+        emoji = "".join(n.reactions)
+        return f"{n.creator or 'Someone'} reacted {emoji + ' ' if emoji else ''}to your comment on {n.card_name}"
     verb = NOTIFICATION_VERBS.get(n.type) or re.sub(r"(?<!^)(?=[A-Z])", " ", n.type).lower()
     subject = n.card_name if n.card_id else n.board_name
     line = " ".join(part for part in (n.creator or "Trello", verb, subject) if part)

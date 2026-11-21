@@ -1,20 +1,24 @@
-"""A card's details: header, description, attachments, checklists and comments. Used as the browser's preview pane and the card screen."""
+"""A card's details: header, description, attachments, checklists and comments. Used as the browser's preview pane
+and the card screen. With no card to show, it shows a tip on using the app instead, a new one every so often."""
 
 from __future__ import annotations
+
+import random
 
 from rich.console import Group, RenderableType
 from rich.style import Style
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static
 
 from tui_trello.backend import BackendError
-from tui_trello.models import Attachment, Card, CardContext, Checklist
+from tui_trello.models import Attachment, Card, CardContext, Checklist, Comment
 from tui_trello.ui import markdown, render
 from tui_trello.ui.bidi import BidiText, visual
 from tui_trello.ui.screens.picker import attachment_hint, attachment_marker
+from tui_trello.ui.tips import TIPS
 
 
 class CardView(VerticalScroll):
@@ -29,14 +33,24 @@ class CardView(VerticalScroll):
     CardView .checklists.visible, CardView .attachments.visible { display: block; }
     CardView #card-attachments { margin-bottom: 1; }
     CardView #card-checklists { margin-bottom: 1; }
+    CardView #card-body { height: auto; }
+    CardView #card-tip { display: none; padding: 1 0; }
+    CardView.empty #card-body { display: none; }
+    CardView.empty #card-tip { display: block; }
     """
 
+    TIP_SECONDS = 15
+    REACTORS_SHOWN = 3  # names under a comment's emoji; more than this shows a count
+
     def __init__(self, *, id: str | None = None) -> None:
-        super().__init__(id=id)
+        super().__init__(id=id, classes="empty")
         self.card: Card | None = None
         self.context: CardContext | None = None
+        self.tip = random.randrange(len(TIPS))
 
     def on_mount(self) -> None:
+        self.show_tip()
+        self.set_interval(self.TIP_SECONDS, self.next_tip)
         self.app.store.drafts_changed.subscribe(self, self.on_draft_changed)
         self.app.store.notifications_changed.subscribe(self, lambda _: self.on_notifications_changed())
         self.app.store.comments_changed.subscribe(self, self.on_comments_changed)
@@ -54,27 +68,36 @@ class CardView(VerticalScroll):
             self.show_meta(self.card, self.context)
 
     def compose(self) -> ComposeResult:
-        yield Static(id="card-title")
-        yield Static(id="card-meta")
-        yield Static("Description", classes="section")
-        yield Static(id="card-desc")
-        yield Static("Attachments", classes="section attachments")
-        yield Static(id="card-attachments", classes="attachments")
-        yield Static("Checklists", classes="section checklists")
-        yield Static(id="card-checklists", classes="checklists")
-        yield Static("Comments", classes="section")
-        yield Static(id="card-comments")
+        yield Static(id="card-tip")
+        with Vertical(id="card-body"):
+            yield Static(id="card-title")
+            yield Static(id="card-meta")
+            yield Static("Description", classes="section")
+            yield Static(id="card-desc")
+            yield Static("Attachments", classes="section attachments")
+            yield Static(id="card-attachments", classes="attachments")
+            yield Static("Checklists", classes="section checklists")
+            yield Static(id="card-checklists", classes="checklists")
+            yield Static("Comments", classes="section")
+            yield Static(id="card-comments")
+
+    def show_tip(self) -> None:
+        self.query_one("#card-tip", Static).update(Group(
+            Text("No card here yet.", style="dim"), Text(""),
+            Text.assemble(("💡 Tip", "bold"), (f"  {self.tip + 1}/{len(TIPS)}", "dim")),
+            markdown.inline(TIPS[self.tip]),
+        ))
+
+    def next_tip(self) -> None:
+        if self.has_class("empty"):
+            self.tip = (self.tip + 1) % len(TIPS)
+            self.show_tip()
 
     def show(self, card: Card | None, context: CardContext) -> None:
         self.card, self.context = card, context
         self.scroll_home(animate=False)
+        self.set_class(card is None, "empty")
         if card is None:
-            self.query_one("#card-title", Static).update(Text("No card selected", style="dim"))
-            self.query_one("#card-meta", Static).update("")
-            self.show_description("")
-            self.show_attachments([])
-            self.show_checklists([])
-            self.query_one("#card-comments", Static).update("")
             return
         self.query_one("#card-title", Static).update(BidiText(card.name))
         self.show_meta(card, context)
@@ -170,8 +193,14 @@ class CardView(VerticalScroll):
                 parts += [Text.assemble(("● ", "magenta"), visual(Text(comment.author, style="bold")), "  ",
                                         (when, "dim")), markdown.render(comment.text)]
                 if counts := comment.reaction_counts(me_id):
-                    parts.append(Text("  ").join(Text(f"{native} {n}", style="bold cyan" if mine else "dim")
-                                                 for _, native, n, mine in counts))
+                    parts.append(Text("  ").join(self.reaction(comment, name, native, n, mine, me_id)
+                                                 for name, native, n, mine in counts))
                 parts.append(Text(""))
             comments_text = Group(*parts) if parts else Text("No comments.", style="dim")
         self.query_one("#card-comments", Static).update(comments_text)
+
+    def reaction(self, comment: Comment, name: str, native: str, n: int, mine: bool, me_id: str) -> Text:
+        """An emoji under a comment with who gave it, or how many when that's a lot of names."""
+        who = comment.reactors(name, me_id)
+        names = ", ".join(who) if n <= self.REACTORS_SHOWN else f"{n}"
+        return Text.assemble(native, " ", visual(Text(names, style="bold cyan" if mine else "dim")))

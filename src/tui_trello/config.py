@@ -35,6 +35,11 @@ def config_path() -> Path:
     return base / "tui-trello" / "config.toml"
 
 
+def state_dir() -> Path:
+    """Where the app keeps what it writes itself (drafts, remembered choices): `$XDG_STATE_HOME/tui-trello`."""
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "tui-trello"
+
+
 @dataclass
 class Settings:
     api_key: str = ""

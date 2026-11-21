@@ -38,6 +38,8 @@ KEYS = [
         ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
         ("a", "attachments: enter opens one in the browser, ctrl+s saves it to Downloads, ctrl+y copies its link; "
               "attach a file, or paste a URL to attach a link"),
+        ("C", "reply to a comment: it starts with a quote of it and @mentions its author; for a long one, pick what "
+              "to quote. Also in notifications"),
         ("R", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),
         ("y Y", "copy the link to the card, to one of its comments"),
         ("o", "open in the web browser"),
@@ -46,7 +48,8 @@ KEYS = [
         ("enter / l", "open the card and mark its notifications read"),
         ("d", "mark read"),
         ("D", "mark all read"),
-        ("u", "unread only / all"),
+        ("u", "hide / show the ones you've read (hidden at first; remembered)"),
+        ("C", "reply to the comment"),
     ]),
     ("Pickers", [
         ("type", "filter"),
