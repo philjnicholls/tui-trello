@@ -16,6 +16,7 @@ from tui_trello.ui.widgets.spinner import Spinner
 
 
 class CardScreen(CardActionsScreen):
+    HELP_PLACE = "card"  # which keys `?` shows
     DEFAULT_CSS = """
     CardScreen CardView { padding: 1 4; }
     """

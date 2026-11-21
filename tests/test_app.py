@@ -508,6 +508,41 @@ async def test_reply_from_notifications(app) -> None:
         assert isinstance(app.screen, NotificationsScreen)
 
 
+async def test_notification_comments_wrap(app, backend) -> None:
+    words = " ".join(f"word{n}" for n in range(200))
+    backend.push_notification(backend.notification("commentCard", "Alan Turing", "Split backend from UI",
+                                                   extra=f"Short start.\n\n{words}"))
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("4")
+        await pilot.pause()
+        lines = screen_lines(app)
+        top = next(i for i, line in enumerate(lines) if "Alan Turing commented on" in line)
+        comment = lines[top + 1:top + 1 + NotificationsScreen.COMMENT_LINES]
+        assert "Product roadmap · Short start. word0" in comment[0]
+        assert all("word" in line for line in comment) and comment[-1].rstrip().endswith("…")
+        assert "Grace Hopper mentioned you" in lines[top + 1 + NotificationsScreen.COMMENT_LINES]  # the next row
+
+
+async def test_help_shows_the_keys_for_the_view(app) -> None:
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        await pilot.press("4", "question_mark")
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "Keys in notifications" in lines and "mark all read" in lines
+        assert "move to another list" not in lines and "cycle sort" not in lines
+        await pilot.press("a")  # every key
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "move to another list" in lines and "cycle sort" in lines
+        await pilot.press("escape", "2", "question_mark")
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "Keys in triage" in lines and "cycle sort" in lines and "move to another list" in lines
+        assert "mark all read" not in lines and "show or hide the preview" not in lines
+
+
 async def test_hiding_read_notifications_is_remembered(backend, state_dir) -> None:
     app = TrelloApp(backend, Settings(default_board="b-product", layout="notifications"))
     async with app.run_test(size=(120, 30)) as pilot:

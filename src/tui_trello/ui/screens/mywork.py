@@ -30,6 +30,7 @@ GAPS = 6
 
 
 class MyWorkScreen(ListScreen):
+    HELP_PLACE = "mywork"  # which keys `?` shows
     AUTO_FOCUS = "#agenda"
 
     DEFAULT_CSS = """

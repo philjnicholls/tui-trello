@@ -29,6 +29,7 @@ SORTS = {
 
 
 class TriageScreen(BoardScreen):
+    HELP_PLACE = "triage"  # which keys `?` shows
     AUTO_FOCUS = "DataTable"
 
     DEFAULT_CSS = """

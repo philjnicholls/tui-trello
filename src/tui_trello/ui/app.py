@@ -159,7 +159,7 @@ class TrelloApp(App):
 
     def action_toggle_help(self) -> None:
         if not isinstance(self.screen, KeysScreen):
-            self.push_screen(KeysScreen())
+            self.push_screen(KeysScreen(getattr(self.screen, "HELP_PLACE", None)))
 
     # -- boards ---------------------------------------------------------------------------------------------------
 

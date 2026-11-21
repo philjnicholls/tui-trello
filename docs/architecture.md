@@ -42,7 +42,7 @@ src/tui_trello/
       mywork.py       my cards on every board, grouped by due date, with preview
       notifications.py  Trello's notifications; enter opens the card, d / D mark read, u hides read ones, C replies
       card.py         full-screen card
-      keys.py         the ? key reference
+      keys.py         the ? key reference: the keys for the screen's HELP_PLACE, a for all
       picker.py       PickerScreen (fuzzy choose one), its label, checklist, attachment and file
                       variants, and TextPromptScreen (ctrl+o attaches a file)
 tests/                pytest; UI flows driven by key presses against the demo backend
@@ -86,7 +86,8 @@ scripts/screenshots.py
   columns would swap sides. The CLI switches bidi terminals to explicit mode so they don't reorder screen lines.
 - **Keys**: motions (`j` `k` `gg` `G` `ctrl+d` `ctrl+u`) live once in `TrelloApp` and act on the focused widget,
   trying its `action_cursor_down`, `action_first`, `action_scroll_home`, ... in turn (`MOTIONS`). Two-key sequences
-  are in `CHORDS`. Screens bind only what is theirs: `h`/`l`, and their verbs. Keep `ui/screens/keys.py` in step.
+  are in `CHORDS`. Screens bind only what is theirs: `h`/`l`, and their verbs. Keep `ui/screens/keys.py` in step,
+  saying where each key works (a screen's `HELP_PLACE`), so `?` shows the right ones.
 - **Screens** are Textual screens. Layouts are Textual *modes*, each with its own screen stack, so switching from the
   browser to the triage table and back keeps your place in both.
 

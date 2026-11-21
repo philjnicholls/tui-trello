@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from rich.console import Console
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
@@ -23,9 +24,14 @@ from tui_trello.ui.widgets.spinner import Spinner
 AGO_WIDTH = 4
 MARK = 2  # the unread dot and a space
 
+WRAP_CONSOLE = Console(width=200)  # only for Text.wrap; widths are passed in
+
 
 class NotificationsScreen(Screen):
+    HELP_PLACE = "notifications"  # which keys `?` shows
     AUTO_FOCUS = "#notifications"
+
+    COMMENT_LINES = 4  # a longer comment is cut, with an ellipsis; enter opens the card to read it all
 
     DEFAULT_CSS = """
     NotificationsScreen #notifications, NotificationsScreen #notifications:focus {
@@ -94,8 +100,9 @@ class NotificationsScreen(Screen):
 
     @staticmethod
     def row(n: Notification, now: datetime, width: int) -> Text:
-        """Two lines: what happened and when; then the board and the comment, if there is one. The first is an
-        English sentence with names in it, so it reads left to right even when it starts with an Arabic name."""
+        """What happened and when; then the board and the comment, if there is one, wrapped onto up to
+        `COMMENT_LINES` lines. The first is an English sentence with names in it, so it reads left to right even
+        when it starts with an Arabic name."""
         summary_width = max(12, width - MARK - AGO_WIDTH - 1)
         first = Text.assemble(("● " if n.unread else "  ", f"bold {render.BELL_COLOUR}"),
                               fit(Text(render.notification_summary(n), style="bold" if n.unread else ""),
@@ -105,8 +112,14 @@ class NotificationsScreen(Screen):
         if n.text:
             detail.append(" · ", style="dim")
             detail.append(" ".join(n.text.split()), style="italic")
-        second = Text.assemble("  ", fit(detail, width - MARK))
-        row = Text("\n").join([first, second])
+        detail_width = max(12, width - MARK)
+        lines = list(detail.wrap(WRAP_CONSOLE, detail_width))
+        if len(lines) > NotificationsScreen.COMMENT_LINES:
+            lines = lines[:NotificationsScreen.COMMENT_LINES]
+            lines[-1].rstrip()
+            lines[-1].truncate(detail_width - 1)
+            lines[-1].append("…", style="italic")
+        row = Text("\n").join([first, *(Text.assemble("  ", fit(line, detail_width)) for line in lines)])
         row.no_wrap, row.overflow = True, "ellipsis"
         return row
 

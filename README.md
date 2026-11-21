@@ -140,7 +140,7 @@ says so, run `tui-trello login` again.
 
 ## Keys
 
-Vim-style throughout; `?` shows them all in the app.
+Vim-style throughout; `?` in the app shows the keys for the view you are in, and `a` there shows them all.
 
 | key                    | does                                                                               |
 | ---------------------- | ---------------------------------------------------------------------------------- |

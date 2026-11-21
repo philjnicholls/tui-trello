@@ -20,6 +20,7 @@ from tui_trello.ui.widgets.spinner import Spinner
 
 
 class BrowserScreen(BoardScreen):
+    HELP_PLACE = "browser"  # which keys `?` shows
     AUTO_FOCUS = "#lists"
 
     DEFAULT_CSS = """
