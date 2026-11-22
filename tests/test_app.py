@@ -588,6 +588,26 @@ async def test_copy_links(app, monkeypatch) -> None:
         assert app.clipboard == f"{card.url}#comment-{comment.id}"
 
 
+async def test_copy_and_open_board_link(app, monkeypatch) -> None:
+    monkeypatch.setattr(clipboard, "command", lambda: None)
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        board_url = app.store.snapshot.board.url
+        assert board_url
+        await pilot.press("y")  # the lists column has focus
+        assert app.clipboard == board_url
+        await pilot.press("o")
+        assert opened == [board_url]
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("y")
+        assert app.clipboard == card.url
+        await pilot.press("B")
+        assert app.clipboard == board_url
+
+
 async def test_attachments(app, monkeypatch, tmp_path) -> None:
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", opened.append)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import webbrowser
+
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -145,6 +147,19 @@ class BrowserScreen(BoardScreen):
                 self.query_one("#cards", OptionList).focus()
         elif self.query_one("#cards", OptionList).has_focus:
             self.open_card()
+
+    # On the lists column, y and o mean the board: Trello gives a list no page of its own.
+    def action_copy_link(self) -> None:
+        if self.query_one("#lists", OptionList).has_focus:
+            self.action_copy_board_link()
+        else:
+            super().action_copy_link()
+
+    def action_open_in_browser(self) -> None:
+        if not self.query_one("#lists", OptionList).has_focus:
+            super().action_open_in_browser()
+        elif self.snapshot and self.snapshot.board.url:
+            webbrowser.open(self.snapshot.board.url)
 
     def action_back_out(self) -> None:
         self.query_one("#lists", OptionList).focus()

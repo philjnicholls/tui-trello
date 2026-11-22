@@ -51,6 +51,8 @@ KEYS = [
         ("R", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),
         ("y Y", "copy the link to the card, to one of its comments"),
         ("o", "open in the web browser"),
+        ("y o", "on the lists column, copy or open the board's link (a list has no link of its own)", {"browser"}),
+        ("B", "copy the link to the board", {"browser", "triage"}),
     ]),
     ("Notifications", {"notifications"}, [
         ("enter / l", "open the card and mark its notifications read"),

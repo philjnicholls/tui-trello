@@ -324,6 +324,10 @@ class ListScreen(CardActionsScreen):
 class BoardScreen(ListScreen):
     """A list screen showing the open board."""
 
+    BINDINGS = [
+        Binding("B", "copy_board_link", "Copy board link", show=False),
+    ]
+
 
     def on_mount(self) -> None:
         self.app.store.board_changed.subscribe(self, lambda _: self.redraw())
@@ -334,3 +338,7 @@ class BoardScreen(ListScreen):
     @property
     def snapshot(self) -> BoardSnapshot | None:
         return self.app.store.snapshot
+
+    def action_copy_board_link(self) -> None:
+        if self.snapshot and self.snapshot.board.url:
+            self.copy(self.snapshot.board.url, "the board")
