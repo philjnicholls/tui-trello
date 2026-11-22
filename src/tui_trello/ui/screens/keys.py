@@ -37,6 +37,8 @@ KEYS = [
         ("r", "reload"),
     ]),
     ("Cards", CARDS, [
+        ("n", "new card: on the highlighted list (in triage and my work, pick the list first); the first line is its "
+              "name, the lines after it its description", LISTS),
         ("m", "move to another list"),
         ("c", "comment: enter sends, alt+enter new line, @ mentions someone (tab or enter picks)"),
         ("", "in a comment or description, ctrl+o attaches a file and puts its link in"),

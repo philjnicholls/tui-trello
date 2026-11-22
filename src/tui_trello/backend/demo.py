@@ -302,6 +302,19 @@ class DemoBackend:
         snapshot.replace_card(moved)
         return moved
 
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom") -> Card:
+        snapshot = next((s for s in self._boards.values() if any(lst.id == list_id for lst in s.lists)), None)
+        if not snapshot:
+            raise BackendError(f"No list {list_id}")
+        siblings = [c.pos for c in snapshot.cards if c.list_id == list_id]
+        card_id = next(self._ids)
+        card = Card(card_id, name, list_id, snapshot.board.id, desc,
+                    pos=(min(siblings, default=0) - 1) if pos == "top" else (max(siblings, default=0) + 1),
+                    url=f"https://trello.example/c/{card_id}", last_activity=datetime.now(timezone.utc))
+        snapshot.cards.append(card)
+        self._comments[card_id], self._checklists[card_id], self._attachments[card_id] = [], [], []
+        return card
+
     async def add_comment(self, card_id: str, text: str) -> Comment:
         comment = Comment(next(self._ids), "You", text, datetime.now(timezone.utc))
         self._comments.setdefault(card_id, []).insert(0, comment)

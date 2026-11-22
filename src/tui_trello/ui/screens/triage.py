@@ -10,10 +10,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Input, Static
 
-from tui_trello.models import Card
+from tui_trello.models import Card, CardList
 from tui_trello.ui import render
 from tui_trello.ui.bidi import BidiText, visual
-from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar
+from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar, index_of
+from tui_trello.ui.screens.picker import Choice
 from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.spinner import Spinner
 
@@ -111,3 +112,16 @@ class TriageScreen(BoardScreen):
     @on(DataTable.RowSelected)
     def on_row_selected(self) -> None:
         self.open_card()
+
+    async def new_card_list(self) -> CardList | None:
+        if not (lists := self.board_lists()):
+            return None
+        current = self.current_card()
+        lists = sorted(lists, key=lambda lst: not current or lst.id != current.list_id)  # the row's list first
+        choices = [Choice(lst.name, lst, "this card's list" if current and lst.id == current.list_id else "")
+                   for lst in lists]
+        return await self.pick_list("New card on which list?", choices)
+
+    def select_card(self, card_id: str) -> None:
+        if (row := index_of(self.rows, card_id)) is not None:
+            self.query_one(DataTable).move_cursor(row=row)

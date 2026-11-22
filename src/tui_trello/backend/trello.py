@@ -36,6 +36,11 @@ ATTACHMENT_FIELDS = "name,url,isUpload,bytes,mimeType,date,fileName"
 
 CARD_FIELDS = "name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges"
 
+# Errors raised before any of the request went out: Trello can't have acted on it. Any other (a read timeout, a
+# dropped connection) may come after Trello has.
+NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.UnsupportedProtocol,
+            httpx.LocalProtocolError, httpx.ProxyError, httpx.InvalidURL)
+
 
 class TrelloBackend:
     def __init__(self, auth: httpx.Auth, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
@@ -50,8 +55,10 @@ class TrelloBackend:
         timeout = httpx.Timeout(20, write=600) if files else httpx.USE_CLIENT_DEFAULT
         try:
             response = await self._http.request(method, path, params=params, json=body, files=files, timeout=timeout)
-        except httpx.HTTPError as exc:
-            raise BackendError(f"Could not reach Trello: {exc}") from exc
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            # Only an error before the request went out is sure not to have reached Trello.
+            unsure = not isinstance(exc, NOT_SENT)
+            raise BackendError(f"Could not reach Trello: {exc}", unsure=unsure) from exc
         if response.status_code in (400, 401) and "invalid key" in response.text:
             raise BackendError("Trello doesn't recognise the app's API key; it may have been deleted or regenerated. "
                                "Set a current one as APP_API_KEY in tui_trello/auth.py (or api_key in the config).")
@@ -63,7 +70,8 @@ class TrelloBackend:
         if response.status_code == 401:
             raise BackendError("Trello rejected the credentials (401). Run `tui-trello login` again.")
         if response.is_error:
-            raise BackendError(f"Trello returned {response.status_code} for {path}: {response.text[:200]}")
+            raise BackendError(f"Trello returned {response.status_code} for {path}: {response.text[:200]}",
+                               unsure=response.is_server_error)
         return response.json()
 
     async def me(self) -> Member:
@@ -115,6 +123,10 @@ class TrelloBackend:
     async def move_card(self, card: Card, list_id: str, pos: str = "top") -> Card:
         data = await self._request("PUT", f"/cards/{card.id}", idList=list_id, pos=pos, fields=CARD_FIELDS)
         return Card.from_api(data)
+
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom") -> Card:
+        body = {"idList": list_id, "name": name, "pos": pos, **({"desc": desc} if desc else {})}
+        return Card.from_api(await self._request("POST", "/cards", body=body, fields=CARD_FIELDS))
 
     async def add_comment(self, card_id: str, text: str) -> Comment:
         return Comment.from_api(await self._request("POST", f"/cards/{card_id}/actions/comments", text=text))

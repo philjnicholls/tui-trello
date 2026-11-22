@@ -35,8 +35,8 @@ src/tui_trello/
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
       bell.py         the top-bar unread-notification count (a red 🔔)
     screens/
-      base.py         CardActionsScreen (m, c, e, t, x, a, R, y, Y, o), ListScreen (/ filter), BoardScreen (redraws on
-                      board_changed)
+      base.py         CardActionsScreen (m, c, e, t, x, a, R, y, Y, o), ListScreen (/ filter, n new
+                      card), BoardScreen (redraws on board_changed)
       browser.py      Miller columns: lists | cards | preview
       triage.py       sortable, filterable table of every card
       mywork.py       my cards on every board, grouped by due date, with preview
@@ -74,7 +74,17 @@ scripts/screenshots.py
 - **Drafts**: `TextPromptScreen` calls `on_change` a moment after typing stops and when it closes; the card
   actions pass `Store.save_draft`, which writes `drafts.py`'s file and publishes `drafts_changed` (the `CardView`
   marks the card). A draft is dropped once the backend call succeeds, so a failed send keeps it. Trello has no
-  drafts API, so they are local. Tests point `XDG_STATE_HOME` at a temporary directory (`tests/conftest.py`).
+  drafts API, so they are local. A card not made yet has no id, so each new card's box keeps a draft of its own,
+  `<list id>/<token>`, from the moment it opens until Trello has made the card: `Store.new_card_box` gives the box
+  the list's draft that failed last, else its oldest, that no other box has open and isn't being sent, or a new
+  one, so two boxes on a list never write over each other. A send marks its draft sent (on disk); a failure unmarks
+  it only if neither this attempt's outcome nor an earlier one's is unknown (`BackendError.unsure`: a timeout or
+  dropped connection, anything but an error before the request went out), and an edit keeps the mark. A draft
+  offered still marked sent warns that the card may exist already. The browser marks lists with unsent new cards (✐). Tests point `XDG_STATE_HOME` at a
+  temporary directory (`tests/conftest.py`).
+- **Cards made meanwhile**: `Store.create_card` remembers each card it makes while a board fetch is under way, as
+  `_replace` keeps it; a reload whose fetch started before a card was made adds it back, so a new card never vanishes
+  until the next reload. A fetch is told from the cards made since by a tick of a counter, not a clock.
 - **Notifications**: `TrelloApp.check_notifications` runs at start-up, every `[notifications] interval` seconds and
   on `r`. `Store.load_notifications` returns the unread ones it hadn't seen (none on the first load, so the backlog
   isn't announced), and `TrelloApp.announce` toasts them and raises a desktop notification through `ui/desktop.py`.

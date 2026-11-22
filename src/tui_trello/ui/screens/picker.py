@@ -176,13 +176,13 @@ class PickerScreen(ModalScreen[T | None]):
 
 class TextPromptScreen(ModalScreen[str | None]):
     """A text box. Enter saves, alt+enter (or ctrl+j) starts a new line, Esc cancels. Dismisses with the text
-    (stripped; None if blank), or None if cancelled.
+    (stripped, unless `strip` is False; None if blank), or None if cancelled.
 
     `multiline` makes it an editor for longer text: bigger, enter starts a new line, ctrl+s saves, and it dismisses
     with the text as typed, blank included (clearing a description is an edit), None only if cancelled.
 
     `text` is what the box starts with (a draft). `on_change` is called with the text a moment after typing stops,
-    and when the box closes either way, so the caller can keep a draft.
+    and when the box closes either way, so the caller can keep a draft. `hint` is added to the keys shown below.
 
     With `mentions` (a coroutine function returning members), typing "@" shows matching members below the box:
     tab or enter puts in the highlighted one's @username, up and down choose, Esc hides the list.
@@ -221,7 +221,8 @@ class TextPromptScreen(ModalScreen[str | None]):
 
     def __init__(self, title: str, mentions: Callable[[], Awaitable[list[Member]]] | None = None, *,
                  text: str = "", multiline: bool = False, on_change: Callable[[str], None] | None = None,
-                 notice: str = "", attach: Callable[[Path], Awaitable[str]] | None = None) -> None:
+                 notice: str = "", attach: Callable[[Path], Awaitable[str]] | None = None, hint: str = "",
+                 strip: bool = True) -> None:
         super().__init__(classes="editor" if multiline else "")
         self.attach = attach
         self.title_text = title
@@ -229,6 +230,8 @@ class TextPromptScreen(ModalScreen[str | None]):
         self.multiline = multiline
         self.on_change = on_change
         self.notice = notice
+        self.hint = hint
+        self.strip = strip
         self.change_timer: Timer | None = None
         self.mentions_loader = mentions
         self.members: list[Member] | None = None
@@ -251,6 +254,8 @@ class TextPromptScreen(ModalScreen[str | None]):
                 hint += " · @ mention"
             if self.attach:
                 hint += " · ctrl+o attach a file"
+            if self.hint:
+                hint += f" · {self.hint}"
             yield Label(hint, classes="hint")
 
     def on_mount(self) -> None:
@@ -355,7 +360,10 @@ class TextPromptScreen(ModalScreen[str | None]):
             return
         self.report_change()  # the caller drops the draft once the text is safely on Trello
         text = self.query_one(TextArea).text
-        self.dismiss(text if self.multiline else text.strip() or None)
+        if self.multiline:
+            self.dismiss(text)
+        else:
+            self.dismiss((text.strip() if self.strip else text) if text.strip() else None)
 
     def action_newline(self) -> None:
         self.query_one(TextArea).insert("\n")

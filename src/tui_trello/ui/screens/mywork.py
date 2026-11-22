@@ -14,10 +14,11 @@ from textual.widgets.option_list import Option
 
 from tui_trello.agenda import agenda
 from tui_trello.backend import BackendError
-from tui_trello.models import Card, WorkSnapshot
+from tui_trello.models import Card, CardList, WorkSnapshot
 from tui_trello.ui import render
 from tui_trello.ui.bidi import fit
 from tui_trello.ui.screens.base import FILTER_HELP, ListScreen, TopBar
+from tui_trello.ui.screens.picker import Choice
 from tui_trello.ui.widgets.card_view import CardView
 from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.spinner import Spinner
@@ -167,3 +168,19 @@ class MyWorkScreen(ListScreen):
         preview = self.query_one(CardView)
         preview.display = not preview.display
         self.call_after_refresh(self.redraw)  # the list's width changed
+
+    async def new_card_list(self) -> CardList | None:
+        if not (work := self.snapshot):
+            self.notify("My work is still loading")
+            return None
+        current = self.current_card()
+        lists = sorted(work.lists.values(), key=lambda lst: (
+            not current or lst.board_id != current.board_id, work.board_named(lst.board_id).lower(), lst.pos))
+        choices = [Choice(work.list_location(lst), lst) for lst in lists]
+        return await self.pick_list("New card on which list?", choices)
+
+    def select_card(self, card_id: str) -> None:
+        """Nothing to select: a card made here has no members, so it isn't in my work (the toast says where it is)."""
+
+    def list_label(self, card_list: CardList) -> str:
+        return self.snapshot.list_location(card_list) if self.snapshot else card_list.name

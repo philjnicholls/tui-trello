@@ -12,6 +12,7 @@ TIPS = (
     "`C` replies to a comment: the reply quotes it and @mentions its author.",
     "`esc` in a comment or description keeps what you wrote as a draft, even if you quit.",
     "`R` reacts to a comment with an emoji; picking one you gave takes it off.",
+    "`n` makes a new card: on the highlighted list in the browser, or pick the list in triage and my work.",
     "`m` moves a card to another list.",
     "`t` puts labels on a card or takes them off; type a new name to create one.",
     "`x` ticks checklist items; type new text to add an item or a checklist.",

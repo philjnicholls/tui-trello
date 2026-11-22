@@ -26,7 +26,12 @@ from tui_trello.models import (
 
 
 class BackendError(Exception):
-    """A backend call failed; the message is fit to show the user."""
+    """A backend call failed; the message is fit to show the user. `unsure` if the request may have reached the
+    service and done its work all the same (a timeout or dropped connection after sending, a gateway error)."""
+
+    def __init__(self, message: str, *, unsure: bool = False) -> None:
+        super().__init__(message)
+        self.unsure = unsure
 
 
 class Backend(Protocol):
@@ -41,6 +46,8 @@ class Backend(Protocol):
     async def comments(self, card_id: str) -> list[Comment]: ...
 
     async def move_card(self, card: Card, list_id: str, pos: str = "top") -> Card: ...
+
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom") -> Card: ...
 
     async def add_comment(self, card_id: str, text: str) -> Comment: ...
 

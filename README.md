@@ -152,6 +152,8 @@ Vim-style throughout; `?` in the app shows the keys for the view you are in, and
 | `/`                    | filter: `words #label @member list:name !overdue !due`; `esc` clears               |
 | `:`                    | command palette: jump to any board or card                                         |
 | `b`                    | pick a board                                                                       |
+| `n`                    | new card on the list (triage, my work: pick the list first); the first line is its |
+|                        | name, the lines after it its description                                           |
 | `m` `c` `o`            | move, comment (enter sends, alt+enter new line, `@` mentions), open in the browser |
 | `e`                    | edit the description (enter new line, ctrl+s saves)                                |
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |

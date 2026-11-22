@@ -15,6 +15,8 @@ PAYLOADS = {
     "/1/boards/b1/members": [{"id": "m1", "fullName": "Ada Lovelace", "username": "ada"}],
     "/1/boards/b1/labels": [{"id": "lb1", "name": "bug", "color": "red"}],
     "/1/cards/c1": {"id": "c1", "name": "Card", "idList": "l2", "idBoard": "b1"},
+    "/1/cards": {"id": "c3", "name": "New one", "desc": "Why", "idList": "l1", "idBoard": "b1",
+                 "url": "https://trello.com/c/c3"},
     "/1/cards/c1/checklists": [{"id": "cl1", "name": "Tasks", "pos": 1, "checkItems": [
         {"id": "i1", "name": "Write it", "state": "incomplete", "pos": 1}]}],
     "/1/cards/c1/checkItem/i1": {"id": "i1", "name": "Write it", "state": "complete", "pos": 1},
@@ -190,3 +192,48 @@ async def test_set_description_sends_the_text_in_the_body() -> None:
     await backend.set_description(snapshot.cards[0], long)
     assert requests[-1].method == "PUT" and "desc" not in requests[-1].url.params
     assert json.loads(requests[-1].content) == {"desc": long}
+
+
+async def test_create_card() -> None:
+    import json
+
+    requests: list[httpx.Request] = []
+    card = await make_backend(requests).create_card("l1", "New one", "Why")
+    assert (requests[-1].method, requests[-1].url.path) == ("POST", "/1/cards")
+    assert json.loads(requests[-1].content) == {"idList": "l1", "name": "New one", "desc": "Why", "pos": "bottom"}
+    assert (card.id, card.name, card.desc, card.list_id, card.board_id) == ("c3", "New one", "Why", "l1", "b1")
+
+
+async def test_create_card_without_a_description() -> None:
+    import json
+
+    requests: list[httpx.Request] = []
+    await make_backend(requests).create_card("l1", "New one")
+    assert json.loads(requests[-1].content) == {"idList": "l1", "name": "New one", "pos": "bottom"}
+
+
+def failing_with(error: Exception) -> TrelloBackend:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise error
+
+    return TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+
+
+@pytest.mark.parametrize(("backend", "unsure"), [
+    (failing_with(httpx.ConnectError("refused")), False),  # never sent
+    (failing_with(httpx.ConnectTimeout("no answer")), False),
+    (failing_with(httpx.PoolTimeout("no free connection")), False),
+    (failing_with(httpx.UnsupportedProtocol("no scheme")), False),
+    (failing_with(httpx.LocalProtocolError("bad header")), False),
+    (failing_with(httpx.ProxyError("proxy refused")), False),
+    (failing_with(httpx.InvalidURL("bad URL")), False),
+    (failing_with(httpx.ReadTimeout("slow")), True),  # sent: Trello may have made the card
+    (failing_with(httpx.RemoteProtocolError("dropped")), True),
+    (failing_with(httpx.WriteTimeout("half sent")), True),
+    (make_backend([], status=502), True),
+    (make_backend([], status=400), False),
+])
+async def test_create_card_outcome_unknown(backend: TrelloBackend, unsure: bool) -> None:
+    with pytest.raises(BackendError) as caught:
+        await backend.create_card("l1", "New one")
+    assert getattr(caught.value, "unsure", None) is unsure

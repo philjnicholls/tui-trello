@@ -4,7 +4,8 @@
   attachments, reply or react to a comment, copy a link, open in browser). A new card feature
   (archive, assign, label, due date, ...) is added here once, as a binding plus an action, and works in every view.
   Subclasses only say which card is current.
-- :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`.
+- :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`, and `n`
+  to make a new card: subclasses say which list it goes on and put the cursor on it once made.
 - :class:`BoardScreen`: a list screen drawing the open board, redrawn whenever the store says it changed.
 
 Textual calls `on_mount` on every class in the MRO (subclass first), so subclasses don't call `super().on_mount()`.
@@ -15,6 +16,7 @@ meaning ("back out", "go in") depends on the layout.
 
 from __future__ import annotations
 
+import re
 import webbrowser
 from pathlib import Path
 
@@ -27,8 +29,9 @@ from textual.widgets import Input
 
 from tui_trello import quote
 from tui_trello.backend import BackendError
-from tui_trello.models import REACTIONS, BoardSnapshot, Card, Comment
+from tui_trello.models import REACTIONS, BoardSnapshot, Card, CardList, Comment
 from tui_trello.query import CardQuery
+from tui_trello.store import NewCardDraft
 from tui_trello.ui import clipboard
 from tui_trello.ui.screens.picker import (
     AttachmentPickerScreen,
@@ -270,9 +273,21 @@ async def attach_for_text(screen: Screen, card_id: str, path: Path) -> str:
     return f"[{name}]({attachment.url})"
 
 
+def split_card_text(text: str) -> tuple[str, str]:
+    """A new card's box's text as the card's name (its first line, on one line) and description (the lines after it,
+    without blank lines at either end)."""
+    name, _, desc = text.partition("\n")
+    return " ".join(name.split()), re.sub(r"\A\s*\n|\n\s*\Z", "", desc) if desc.strip() else ""
+
+
+def index_of(cards: list[Card], card_id: str) -> int | None:
+    """Where the card is in the list of cards a view shows, if it is."""
+    return next((i for i, card in enumerate(cards) if card.id == card_id), None)
+
+
 class ListScreen(CardActionsScreen):
-    """A screen listing cards. Compose a `TopBar`, an `Input(id="filter")` and the list; implement `redraw()` and
-    `focus_list()`."""
+    """A screen listing cards. Compose a `TopBar`, an `Input(id="filter")` and the list; implement `redraw()`,
+    `focus_list()`, `new_card_list()` and `select_card()`."""
 
     DEFAULT_CSS = """
     ListScreen #filter { display: none; border: none; height: 1; padding: 0 1; background: $boost; }
@@ -280,7 +295,10 @@ class ListScreen(CardActionsScreen):
     ListScreen #filter:focus { border: none; }
     """
 
-    BINDINGS = [Binding("slash", "filter", "Filter")]
+    BINDINGS = [
+        Binding("slash", "filter", "Filter"),
+        Binding("n", "new_card", "New card"),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
@@ -295,6 +313,81 @@ class ListScreen(CardActionsScreen):
 
     def focus_list(self) -> None:
         raise NotImplementedError
+
+    async def new_card_list(self) -> CardList | None:
+        """The list `n` makes a card on, asking if need be; None (having said why, if it isn't obvious) for none."""
+        raise NotImplementedError
+
+    def select_card(self, card_id: str) -> None:
+        """Put the cursor on the card, if the view shows it."""
+        raise NotImplementedError
+
+    def place(self) -> tuple[object, ...]:
+        """Where the user is: a new card is selected once made only if they haven't moved on meanwhile."""
+        card = self.current_card()
+        return self.app.screen, self.focused, card.id if card else None
+
+    def list_label(self, card_list: CardList) -> str:
+        return card_list.name
+
+    def new_card_toast(self, card: Card, card_list: CardList) -> str:
+        return f"Added “{card.name}” to {self.list_label(card_list)}"
+
+    async def pick_list(self, title: str, choices: list[Choice[CardList]]) -> CardList | None:
+        return await self.app.push_screen_wait(PickerScreen(title, choices))
+
+    def new_card_notice(self, card_list: CardList, box: NewCardDraft) -> str:
+        """Why a new card's box starts with text, if it does."""
+        if not (draft := box.draft):
+            return ""
+        of = f" (1 of {box.free})" if box.free > 1 else ""
+        if not draft.sent:
+            return f"Your unsent card{of}"
+        # Sent before, with no answer: Trello may have made it, and a resend would make a second.
+        name, _ = split_card_text(draft.text)
+        snapshot = self.app.store.snapshot
+        if name and snapshot and any(card.name == name for card in snapshot.cards_in(card_list.id)):
+            return (f"This card may already have been made on Trello: “{name}” is on {card_list.name} already; "
+                    f"check before sending{of}")
+        return f"This card may already have been made on Trello: check before sending{of}"
+
+    @work
+    async def action_new_card(self) -> None:
+        """Ask for the card's name, and its description on the lines after it, and make it at the bottom of the
+        list. The box's text is a draft of its own until Trello has made the card (see `Store.new_card_box`)."""
+        place = self.place()
+        if not (card_list := await self.new_card_list()):
+            return
+        store = self.app.store
+        with store.new_card_box(card_list.id) as box:
+            text = await self.app.push_screen_wait(TextPromptScreen(
+                f"New card in “{card_list.name}”", text=box.draft.text if box.draft else "",
+                notice=self.new_card_notice(card_list, box), hint="the lines after the first are the description",
+                on_change=lambda text: store.save_draft("card", box.id, text), strip=False))
+        if not text:
+            return
+        name, desc = split_card_text(text)
+        if not name:
+            self.notify("A card needs a name on the first line", severity="warning")
+            return
+        try:
+            card = await store.create_card(card_list, name, desc, draft=box.id)
+        except BackendError as exc:
+            if exc.unsure:
+                self.notify(f"{exc} The card may have been made on Trello anyway: check before sending it again (n).",
+                            severity="error")
+            else:
+                self.notify(f"{exc} The card is kept as a draft: n to try again.", severity="error")
+            return
+        here = self.place() == place
+        # The screens subscribe to the store's signals without `immediate`, so publishing queued this screen's
+        # redraw with `call_next`; queueing the selection the same way runs it after the redraw.
+        def show() -> None:
+            if here:
+                self.select_card(card.id)
+            self.notify(self.new_card_toast(card, card_list))
+
+        self.call_next(show)
 
     def action_filter(self) -> None:
         box = self.query_one("#filter", Input)
@@ -338,6 +431,22 @@ class BoardScreen(ListScreen):
     @property
     def snapshot(self) -> BoardSnapshot | None:
         return self.app.store.snapshot
+
+    def new_card_toast(self, card: Card, card_list: CardList) -> str:
+        toast = super().new_card_toast(card, card_list)
+        snapshot = self.snapshot
+        if snapshot and snapshot.board.id == card.board_id and not self.card_query.matches(card, snapshot):
+            toast += " (hidden by the filter; esc clears it)"  # only on the board on screen
+        return toast
+
+    def board_lists(self) -> list[CardList]:
+        """The open board's lists, for a new card; none, having said why, if no board is open or it has none."""
+        if not self.snapshot:
+            self.notify("Open a board first (b)")
+            return []
+        if not self.snapshot.lists:
+            self.notify("This board has no lists")
+        return self.snapshot.lists
 
     def action_copy_board_link(self) -> None:
         if self.snapshot and self.snapshot.board.url:

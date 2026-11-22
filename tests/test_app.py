@@ -1,6 +1,7 @@
 """End-to-end flows driven through the keyboard, against the demo backend."""
 
 import asyncio
+import json
 
 import pytest
 from textual.widgets import DataTable, TextArea
@@ -9,6 +10,7 @@ from tui_trello import store as store_module
 from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
+from tui_trello.drafts import drafts_path
 from tui_trello.ui import clipboard, render
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
@@ -21,6 +23,7 @@ from tui_trello.ui.screens.picker import (
     FilePickerScreen,
     LabelPickerScreen,
     PickerScreen,
+    TextPromptScreen,
 )
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.tips import TIPS
@@ -812,3 +815,557 @@ async def test_opaque_background(backend) -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause(0.2)
         assert backgrounds(app).get("default", 0) < 100
+
+
+def list_id(app, name: str) -> str:
+    return next(lst.id for lst in app.store.snapshot.lists if lst.name == name)
+
+
+def toasts(app) -> list[str]:
+    return [toast.message for toast in app._notifications]
+
+
+async def test_new_card_in_the_browser(app, backend) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "n")  # on the lists column, "Next up"
+        await pilot.pause()
+        assert app.screen.query_one(".title").content == "New card in “Next up”"
+        await pilot.press(*"Write the plan", "ctrl+j", *"First the goal.", "ctrl+j", *"Then the steps.", "enter")
+        await pilot.pause()
+        next_up = list_id(app, "Next up")
+        card = app.store.snapshot.cards_in(next_up)[-1]
+        assert (card.name, card.desc) == ("Write the plan", "First the goal.\nThen the steps.")
+        assert app.screen.current_card() == card
+        assert app.screen.query_one("#cards").has_focus
+        assert (await backend.board_snapshot("b-product")).card(card.id) == card
+        assert card_drafts(next_up) == []
+        assert toasts(app) == ["Added “Write the plan” to Next up"]
+
+
+async def test_new_card_from_triage(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.press("2")
+        await pilot.pause()
+        await pilot.press("j", "j", "j")  # a card on "Next up", under the default sort by list
+        row_list = app.screen.current_card().list_id
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+        first = app.screen.choices[0]
+        assert (first.value.id, first.hint) == (row_list, "this card's list")
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press(*"Triage me", "enter")
+        await pilot.pause()
+        card = app.screen.current_card()
+        assert (card.name, card.list_id) == ("Triage me", row_list)
+        assert card in app.screen.rows
+        await pilot.press("1")
+        await pilot.pause()
+        assert card in app.store.snapshot.cards_in(row_list)
+
+
+async def test_new_card_from_my_work(app, backend) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("b", *"home", "enter")
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert all("›" in choice.label for choice in app.screen.choices)
+        await pilot.press(*"home to do", "enter")
+        await pilot.pause()
+        await pilot.press(*"Clean the gutters", "enter")
+        await pilot.pause()
+        to_do = list_id(app, "To do")
+        card = app.store.snapshot.cards_in(to_do)[-1]
+        assert (card.name, card.member_ids) == ("Clean the gutters", ())  # unassigned
+        assert card.id not in app.screen.cards_by_option
+        assert (await backend.board_snapshot("b-home")).card(card.id) == card
+        assert toasts(app) == ["Added “Clean the gutters” to Home › To do"]
+        await pilot.press("1")
+        await pilot.pause()
+        assert card in app.screen.cards  # the browser shows Home's first list, To do
+
+
+class FailingCards(DemoBackend):
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom"):
+        raise BackendError("Could not reach Trello.")
+
+
+async def test_failed_new_card_is_kept() -> None:
+    app = TrelloApp(FailingCards(), Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        before = list(app.store.snapshot.cards)
+        await pilot.press("n", *"important", "ctrl+j", *"why", "enter")
+        await pilot.pause()
+        inbox = list_id(app, "Inbox")
+        assert card_drafts(inbox) == ["important\nwhy"]
+        assert app.store.snapshot.cards == before
+        assert "The card is kept as a draft: n to try again." in toasts(app)[0]
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "important\nwhy"
+        assert "Your unsent card" in "\n".join(screen_lines(app))
+
+
+async def test_new_card_escape_and_blank(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        before = len(app.store.snapshot.cards)
+        await pilot.press("n", "escape")
+        await pilot.pause()
+        await pilot.press("n", "space", "enter")
+        await pilot.pause()
+        assert len(app.store.snapshot.cards) == before
+        assert card_drafts(list_id(app, "Inbox")) == []
+        await pilot.press("n", *"x  y ", "ctrl+j", "ctrl+j", *"  indented  ", "ctrl+j", *"end", "ctrl+j", "ctrl+j",
+                          "enter")
+        await pilot.pause()
+        card = app.store.snapshot.cards_in(list_id(app, "Inbox"))[-1]
+        assert (card.name, card.desc) == ("x y", "  indented  \nend")
+
+
+async def test_new_card_needs_a_name(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        before = len(app.store.snapshot.cards)
+        await pilot.press("n", "space", "ctrl+j", *"only a description", "enter")
+        await pilot.pause()
+        assert len(app.store.snapshot.cards) == before
+        assert toasts(app) == ["A card needs a name on the first line"]
+        assert card_drafts(list_id(app, "Inbox")) == [" \nonly a description"]
+
+
+class SlowCards(DemoBackend):
+    """Holds each create until `release` is set, and fails it if `fail` is."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release, self.fail = asyncio.Event(), False
+
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom"):
+        await self.release.wait()
+        if self.fail:
+            raise BackendError("Could not reach Trello.")
+        return await super().create_card(list_id, name, desc, pos=pos)
+
+
+def card_drafts(list_id: str) -> list[str]:
+    """The texts of the list's new-card drafts, as saved on disk, oldest first."""
+    try:
+        saved = json.loads(drafts_path().read_text())
+    except OSError:
+        return []
+    return [draft["text"] for key, draft in saved.items() if key.startswith(f"card:{list_id}")]
+
+
+def slow_app(fail: bool = False) -> tuple[TrelloApp, SlowCards]:
+    backend = SlowCards()
+    backend.fail = fail
+    return TrelloApp(backend, Settings(default_board="b-product")), backend
+
+
+def box_notice(app) -> str:
+    """The notice in the new-card box: why it starts with text, if it does."""
+    return "".join(str(label.content) for label in app.screen.query(".notice"))
+
+
+async def test_new_card_kept_while_sending() -> None:
+    app, _ = slow_app()  # never released
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        inbox = list_id(app, "Inbox")
+        await pilot.press("n", *"first", "enter")
+        await pilot.pause()
+        assert card_drafts(inbox) == ["first"]  # until Trello has it
+    # Quit while the card was being made: the next n on the list offers it again, as perhaps made already.
+    app = TrelloApp(DemoBackend(), Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "first"
+        assert box_notice(app) == "This card may already have been made on Trello: check before sending"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.store.snapshot.cards_in(inbox)[-1].name == "first"
+        assert card_drafts(inbox) == []
+
+
+async def test_new_card_escape_keeps_the_text(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        inbox = list_id(app, "Inbox")
+        await pilot.press("n", *"keep me", "escape")
+        await pilot.pause()
+        assert card_drafts(inbox) == ["keep me"]
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "keep me"
+        assert box_notice(app) == "Your unsent card"
+
+
+async def test_two_new_card_boxes_on_one_list(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        inbox = list_id(app, "Inbox")
+        screen = app.screen
+        screen.action_new_card()  # two quick n presses: the second before the first box is up
+        screen.action_new_card()
+        await pilot.pause()
+        assert sum(isinstance(screen, TextPromptScreen) for screen in app.screen_stack) == 2
+        await pilot.press(*"top", "escape")
+        await pilot.pause()
+        await pilot.press(*"under", "escape")
+        await pilot.pause()
+        assert sorted(card_drafts(inbox)) == ["top", "under"]  # neither overwrites the other
+        await pilot.press("n")
+        await pilot.pause()
+        assert box_notice(app) == "Your unsent card (1 of 2)"
+
+
+async def test_new_card_while_one_is_sent() -> None:
+    app, backend = slow_app()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        inbox = list_id(app, "Inbox")
+        await pilot.press("n", *"first", "enter")
+        await pilot.pause()
+        await pilot.press("n")  # while the first is being made
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == ""
+        await pilot.press(*"second")
+        backend.release.set()  # made while the second box is open
+        await pilot.pause()
+        assert app.store.snapshot.cards_in(inbox)[-1].name == "first"
+        assert isinstance(app.screen, TextPromptScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert card_drafts(inbox) == ["second"]  # only the sent card's text goes
+
+
+async def test_failed_new_card_while_another_is_written() -> None:
+    app, backend = slow_app(fail=True)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        inbox = list_id(app, "Inbox")
+        await pilot.press("n", *"first", "ctrl+j", *"why", "enter")
+        await pilot.pause()
+        await pilot.press("n")  # a second box, open when the first fails
+        await pilot.pause()
+        backend.release.set()
+        await pilot.pause()
+        assert "The card is kept as a draft: n to try again." in toasts(app)[0]
+        await pilot.press(*"other", "escape")
+        await pilot.pause()
+        assert card_drafts(inbox) == ["first\nwhy", "other"]  # oldest first; neither overwrites the other
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "first\nwhy"
+        assert box_notice(app) == "Your unsent card (1 of 2)"
+        backend.fail = False
+        await pilot.press("enter")
+        await pilot.pause()
+        assert card_drafts(inbox) == ["other"]
+
+
+async def test_new_card_with_several_drafts_on_the_list() -> None:
+    backend = DemoBackend()
+    inbox = (await backend.board_snapshot("b-product")).lists[0]
+    drafts_path().parent.mkdir(parents=True, exist_ok=True)
+    drafts_path().write_text(json.dumps({f"card:{inbox.id}/{n}": {"text": n} for n in ("one", "two", "three")}))
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        rows = [line for line in screen_lines(app) if "✐" in line]
+        assert len(rows) == 1 and inbox.name in rows[0]  # the lists column marks the list
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "one"
+        assert box_notice(app) == "Your unsent card (1 of 3)"
+
+
+def timed_out() -> BackendError:
+    exc = BackendError("Could not reach Trello: timed out.")
+    exc.unsure = True  # the request may have reached Trello
+    return exc
+
+
+class UnsureCards(DemoBackend):
+    """Makes the card, then loses Trello's answer, as a timeout after Trello has acted would."""
+
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom"):
+        await super().create_card(list_id, name, desc, pos=pos)
+        raise timed_out()
+
+
+async def test_new_card_outcome_unknown() -> None:
+    app = TrelloApp(UnsureCards(), Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("n", *"Maybe", "enter")
+        await pilot.pause()
+        assert "The card may have been made on Trello anyway: check before sending it again (n)." in toasts(app)[0]
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "Maybe"
+        assert box_notice(app) == "This card may already have been made on Trello: check before sending"
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("r")  # the reload brings the card Trello made
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert box_notice(app) == ("This card may already have been made on Trello: “Maybe” is on Inbox already; "
+                                   "check before sending")
+
+
+class UnsureThenRefused(DemoBackend):
+    """Makes the card and loses the answer the first time, then can't reach Trello at all."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tries = 0
+
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom"):
+        self.tries += 1
+        if self.tries == 1:
+            await super().create_card(list_id, name, desc, pos=pos)
+            raise timed_out()
+        raise BackendError("Could not reach Trello: connection refused.")
+
+
+async def test_new_card_failure_keeps_an_unknown_outcome() -> None:
+    app = TrelloApp(UnsureThenRefused(), Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("n", *"Maybe", "enter")
+        await pilot.pause()
+        await pilot.press("n", "enter")  # resent, and never reaches Trello: the first may still have made it
+        await pilot.pause()
+        assert "The card is kept as a draft: n to try again." in toasts(app)[-1]
+        await pilot.press("n")
+        await pilot.pause()
+        assert box_notice(app) == "This card may already have been made on Trello: check before sending"
+
+
+async def test_new_card_edit_keeps_an_unknown_outcome() -> None:
+    app = TrelloApp(UnsureCards(), Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("n", *"Maybe", "enter")
+        await pilot.pause()
+        await pilot.press("n", *" not", "escape")  # edited, not sent: Trello may still have made it
+        await pilot.pause()
+        await pilot.press("n")
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "Maybe not"
+        assert box_notice(app) == "This card may already have been made on Trello: check before sending"
+
+
+async def test_failed_new_card_is_offered_first() -> None:
+    backend = FailingCards()
+    inbox = (await backend.board_snapshot("b-product")).lists[0]
+    drafts_path().parent.mkdir(parents=True, exist_ok=True)
+    drafts_path().write_text(json.dumps({f"card:{inbox.id}/old": {"text": "old"}}))
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        app.screen.action_new_card()  # the old draft's box, under a new one
+        app.screen.action_new_card()
+        await pilot.pause()
+        await pilot.press(*"new", "enter")
+        await pilot.pause()
+        assert "n to try again" in toasts(app)[-1]
+        await pilot.press("escape")  # the old draft's box
+        await pilot.pause()
+        await pilot.press("n")  # tries the card that failed again, not the oldest
+        await pilot.pause()
+        assert app.screen.query_one(TextArea).text == "new"
+        assert box_notice(app) == "Your unsent card (1 of 2)"
+
+
+class ReloadingCards(DemoBackend):
+    """Has the board reloaded while a card is being made, as `r` or the refresh timer might."""
+
+    store = None
+
+    async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom"):
+        card = await super().create_card(list_id, name, desc, pos=pos)
+        await self.store.open_board(card.board_id)
+        return card
+
+
+async def test_create_card_already_reloaded() -> None:
+    backend = ReloadingCards()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        backend.store = app.store
+        card = await app.store.create_card(app.store.snapshot.lists[0], "Once")
+        assert [c.id for c in app.store.snapshot.cards].count(card.id) == 1
+
+
+async def test_new_card_after_moving_away() -> None:
+    backend = SlowCards()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("n", *"Elsewhere", "enter")
+        await pilot.pause()
+        await pilot.press("j")  # to "Next up" while the card is being made on "Inbox"
+        backend.release.set()
+        await pilot.pause()
+        assert toasts(app) == ["Added “Elsewhere” to Inbox"]  # nothing about a filter: there is none
+        assert app.screen.list_id == list_id(app, "Next up")
+        assert app.screen.query_one("#lists").has_focus  # left where the user went
+
+
+async def test_new_card_while_filtering() -> None:
+    app, backend = slow_app()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("n", *"Quietly", "enter")
+        await pilot.pause()
+        await pilot.press("slash", *"qui")  # typing a filter when the card is made
+        backend.release.set()
+        await pilot.pause()
+        assert app.screen.query_one("#filter").has_focus
+        await pilot.press("e")
+        assert app.screen.query_one("#filter").value == "quie"
+        assert toasts(app) == ["Added “Quietly” to Inbox"]
+
+
+async def test_new_card_hidden_by_filter(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("slash", *"#bug", "enter")
+        await pilot.pause()
+        await pilot.press("n", *"Not a bug", "enter")
+        await pilot.pause()
+        card = app.store.snapshot.cards_in(list_id(app, "Inbox"))[-1]
+        assert card.name == "Not a bug" and card not in app.screen.cards
+        assert toasts(app) == ["Added “Not a bug” to Inbox (hidden by the filter; esc clears it)"]
+
+
+async def test_help_lists_new_card(app) -> None:
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert "new card:" in "\n".join(screen_lines(app))
+        await pilot.press("escape", "l", "enter", "question_mark")
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "Keys in a card" in lines
+        assert "new card:" not in lines
+        await pilot.press("escape", "n")  # does nothing on a card
+        await pilot.pause()
+        assert isinstance(app.screen, CardScreen)
+
+
+async def test_new_card_after_moving_within_the_list() -> None:
+    app, backend = slow_app()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")  # into Inbox's cards
+        await pilot.press("n", *"Later", "enter")
+        await pilot.pause()
+        await pilot.press("j")  # to the next card while the new one is being made
+        moved_to = app.screen.current_card()
+        backend.release.set()
+        await pilot.pause()
+        assert app.store.snapshot.cards_in(list_id(app, "Inbox"))[-1].name == "Later"
+        assert app.screen.current_card() == moved_to  # left where the user put it
+
+
+async def test_new_card_filter_note_only_for_the_board_on_screen() -> None:
+    app, backend = slow_app()
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("slash", *"#bug", "enter")
+        await pilot.pause()
+        await pilot.press("n", *"Not a bug", "enter")
+        await pilot.pause()
+        await pilot.press("b", *"home", "enter")  # another board while the card is being made
+        await pilot.pause()
+        assert app.store.snapshot.board.id == "b-home" and app.screen.query_text == "#bug"
+        backend.release.set()
+        await pilot.pause()
+        assert "Added “Not a bug” to Inbox" in toasts(app)  # the filter on screen isn't hiding it
+
+
+class HeldReloads(DemoBackend):
+    """Once `hold` is set, holds each board fetch, taken when asked, until `release` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hold, self.release = False, asyncio.Event()
+
+    async def board_snapshot(self, board_id: str):
+        snapshot = await super().board_snapshot(board_id)
+        if self.hold:
+            await self.release.wait()
+        return snapshot
+
+
+async def test_new_card_outlives_an_older_reload() -> None:
+    backend = HeldReloads()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        backend.hold = True
+        reload = asyncio.create_task(app.store.open_board("b-product"))  # fetched before the card is made
+        await pilot.pause()
+        card = await app.store.create_card(app.store.snapshot.lists[0], "Made meanwhile")
+        backend.release.set()
+        await reload
+        assert app.store.snapshot.card(card.id) == card
+        assert [c.id for c in app.store.snapshot.cards].count(card.id) == 1
+        backend.hold = False
+        await app.store.open_board("b-product")  # a reload after it was made brings it itself
+        assert [c.id for c in app.store.snapshot.cards].count(card.id) == 1
+
+
+async def test_new_card_moved_outlives_an_older_reload() -> None:
+    backend = HeldReloads()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        backend.hold = True
+        reload = asyncio.create_task(app.store.open_board("b-product"))
+        await pilot.pause()
+        lists = app.store.snapshot.lists
+        card = await app.store.create_card(lists[0], "Moved meanwhile")
+        moved = await app.store.move_card(card, lists[1].id)
+        backend.release.set()
+        await reload
+        assert app.store.snapshot.card(card.id) == moved  # as it is now, not as it was made
+
+
+class FailingReloads(HeldReloads):
+    async def board_snapshot(self, board_id: str):
+        snapshot = await super().board_snapshot(board_id)
+        if self.hold:
+            raise BackendError("Could not reach Trello.")
+        return snapshot
+
+
+async def test_failed_reload_forgets_the_cards_made_meanwhile() -> None:
+    backend = FailingReloads()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        backend.hold = True
+        reload = asyncio.create_task(app.store.open_board("b-product"))
+        await pilot.pause()
+        await app.store.create_card(app.store.snapshot.lists[0], "Made meanwhile")
+        backend.release.set()
+        with pytest.raises(BackendError):
+            await reload
+        assert not app.store._made  # no fetch under way can have missed it

@@ -28,3 +28,18 @@ def test_a_damaged_file_is_ignored(tmp_path) -> None:
     path = tmp_path / "drafts.json"
     path.write_text("{not json")
     assert Drafts(path).kinds("c1") == []
+
+
+def test_a_sent_card_draft_is_remembered(tmp_path) -> None:
+    path = tmp_path / "drafts.json"
+    drafts = Drafts(path)
+    drafts.set("card", "l1/a", "name")
+    drafts.mark_sent("card", "l1/a", True)
+    again = Drafts(path)
+    assert again.get("card", "l1/a") == Draft("name", sent=True)
+    assert not again.set("card", "l1/a", "name")  # the box closing on the same text: still sent
+    assert again.set("card", "l1/a", "new name")
+    assert again.get("card", "l1/a") == Draft("new name", sent=True)  # an edit doesn't unmake the card
+    assert again.discard("card", "l1/a")
+    again.set("card", "l1/a", "afresh")
+    assert again.get("card", "l1/a") == Draft("afresh")

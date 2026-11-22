@@ -362,6 +362,9 @@ class BoardSnapshot:
     def replace_card(self, card: Card) -> None:
         self.cards = [card if c.id == card.id else c for c in self.cards]
 
+    def add_card(self, card: Card) -> None:
+        self.cards.append(card)
+
 
 @dataclass
 class WorkSnapshot:
@@ -386,7 +389,13 @@ class WorkSnapshot:
         return self.boards[board_id].name if board_id in self.boards else "?"
 
     def location(self, card: Card) -> str:
-        return f"{self.board_named(card.board_id)} › {self.list_named(card.list_id)}"
+        return self.place(card.board_id, self.list_named(card.list_id))
+
+    def list_location(self, card_list: CardList) -> str:
+        return self.place(card_list.board_id, card_list.name)
+
+    def place(self, board_id: str, list_name: str) -> str:
+        return f"{self.board_named(board_id)} › {list_name}"
 
     def lists_for(self, card: Card) -> list[CardList]:
         return sorted((lst for lst in self.lists.values() if lst.board_id == card.board_id), key=lambda lst: lst.pos)

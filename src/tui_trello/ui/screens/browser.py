@@ -12,10 +12,10 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from tui_trello.models import Card
+from tui_trello.models import Card, CardList
 from tui_trello.ui import render
 from tui_trello.ui.bidi import visual
-from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar
+from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar, index_of
 from tui_trello.ui.widgets.card_view import CardView
 from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.spinner import Spinner
@@ -46,6 +46,7 @@ class BrowserScreen(BoardScreen):
         super().__init__()
         self.list_id: str | None = None
         self.cards: list[Card] = []
+        self.drafted: set[str] = set()  # the lists marked as having unsent new cards
 
     def compose(self) -> ComposeResult:
         with TopBar():
@@ -59,6 +60,13 @@ class BrowserScreen(BoardScreen):
             yield CardView(id="preview")
         yield Footer()
 
+    def on_mount(self) -> None:
+        self.app.store.drafts_changed.subscribe(self, lambda _: self.on_drafts_changed())
+
+    def on_drafts_changed(self) -> None:
+        if self.app.store.lists_with_card_drafts() != self.drafted:
+            self.redraw()
+
     # -- drawing --------------------------------------------------------------------------------------------------
 
     def redraw(self) -> None:
@@ -66,8 +74,10 @@ class BrowserScreen(BoardScreen):
             return
         lists = self.query_one("#lists", OptionList)
         unread = self.app.store.unread_by_card()
+        self.drafted = self.app.store.lists_with_card_drafts()
         lists.set_options(
-            Option(Text.assemble(visual(lst.name), (f"  {self.count(lst.id)}", "dim"), "  ",
+            Option(Text.assemble(visual(lst.name), (f"  {self.count(lst.id)}", "dim"),
+                                 (" ✐" if lst.id in self.drafted else "", "yellow"), "  ",  # an unsent new card
                                  render.unread_badge(sum(unread[c.id] for c in self.matching(lst.id)))), id=lst.id)
             for lst in snapshot.lists
         )
@@ -163,3 +173,15 @@ class BrowserScreen(BoardScreen):
 
     def action_back_out(self) -> None:
         self.query_one("#lists", OptionList).focus()
+
+    async def new_card_list(self) -> CardList | None:
+        return next((lst for lst in self.board_lists() if lst.id == self.list_id), None)
+
+    def select_card(self, card_id: str) -> None:
+        if (row := index_of(self.cards, card_id)) is not None:
+            cards = self.query_one("#cards", OptionList)
+            cards.highlighted = row
+            cards.focus()
+
+    def place(self) -> tuple[object, ...]:
+        return *super().place(), self.list_id

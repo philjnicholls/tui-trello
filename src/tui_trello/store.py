@@ -7,16 +7,17 @@ ones further down the stack, or in another mode) redraws from the same data.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
-from dataclasses import replace
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, replace
+from itertools import count
 from pathlib import Path
 
 from textual.dom import DOMNode
 from textual.signal import Signal
 
-from tui_trello.backend import Backend
-from tui_trello.drafts import Draft, Drafts, Kind
+from tui_trello.backend import Backend, BackendError
+from tui_trello.drafts import Draft, Drafts, Kind, new_card_id
 from tui_trello.files import download_dir, unique_path
 from tui_trello.models import (
     Attachment,
@@ -24,6 +25,7 @@ from tui_trello.models import (
     BoardSnapshot,
     Card,
     CardContext,
+    CardList,
     CheckItem,
     Checklist,
     Comment,
@@ -38,11 +40,21 @@ from tui_trello.models import (
 LABEL_COLOURS = ("green", "yellow", "orange", "red", "purple", "blue", "sky", "lime", "pink", "black")
 
 
+@dataclass(frozen=True)
+class NewCardDraft:
+    """A new card's box's draft: its id, what it holds so far, and how many of the list's drafts were free for the
+    box (this one included, if it is one of them)."""
+
+    id: str
+    draft: Draft | None
+    free: int
+
+
 class Store:
     def __init__(self, owner: DOMNode, backend: Backend, drafts: Drafts | None = None) -> None:
         self.backend = backend
         self.drafts = drafts or Drafts()
-        self.drafts_changed: Signal[str] = Signal(owner, "drafts_changed")  # with the card's id
+        self.drafts_changed: Signal[str] = Signal(owner, "drafts_changed")  # with the card's (or new card draft's) id
         self.comments_changed: Signal[str] = Signal(owner, "comments_changed")  # likewise; for reactions
         self._me: Member | None = None
         self.snapshot: BoardSnapshot | None = None
@@ -61,6 +73,13 @@ class Store:
         self._attachments: dict[str, list[Attachment]] = {}
         self._labels: dict[str, list[Label]] = {}  # by board, for boards other than the open one
         self._members: dict[str, list[Member]] = {}  # likewise
+        self._card_drafts_in_use: Counter[str] = Counter()  # new-card drafts open in a box or being sent, by id
+        # Board fetches under way, and the cards made while one was, by id, each with a tick from `_ticks` for when
+        # it started or was made: a fetch can have missed only the cards made after it started.
+        self._ticks = count()
+        self._board_fetches: set[int] = set()
+        self._made: dict[str, tuple[int, Card]] = {}
+        self._failed_card_drafts: dict[str, str] = {}  # the new-card draft that failed last, by list
 
     def is_busy(self, *what: str) -> bool:
         return any(self.busy.get(name) for name in what) if what else bool(self.busy)
@@ -84,8 +103,22 @@ class Store:
         return self._boards
 
     async def open_board(self, board_id: str) -> BoardSnapshot:
-        async with self._busy("board"):
-            self.snapshot = await self.backend.board_snapshot(board_id)
+        started = next(self._ticks)
+        self._board_fetches.add(started)
+        try:
+            async with self._busy("board"):
+                snapshot = await self.backend.board_snapshot(board_id)
+            # A card made after the fetch started may be missing from it: keep showing it.
+            for made, card in self._made.values():
+                if made > started and card.board_id == board_id and not snapshot.card(card.id):
+                    snapshot.add_card(card)
+        finally:
+            self._board_fetches.discard(started)
+            # Only a fetch still under way can have missed a card.
+            oldest = min(self._board_fetches, default=None)
+            self._made = {card_id: (made, card) for card_id, (made, card) in self._made.items()
+                          if oldest is not None and made > oldest}
+        self.snapshot = snapshot
         self._comments.clear()
         self._checklists.clear()
         self._attachments.clear()
@@ -194,6 +227,37 @@ class Store:
         self._replace(moved)
         return moved
 
+    async def create_card(self, card_list: CardList, name: str, desc: str = "", draft: str = "") -> Card:
+        """Make a card, with no members, at the bottom of the list, and show it if the list's board is open (unless
+        a reload while it was being made has brought it already).
+
+        `draft` is the id of the new-card draft it was written in: in use and marked sent meanwhile, dropped once the
+        card is made, and kept if not (still marked sent if the outcome of this attempt, or an earlier one, is
+        unknown), to be offered first by the list's next box."""
+        if draft:
+            self._card_drafts_in_use[draft] += 1
+            was_sent = bool((before := self.drafts.get("card", draft)) and before.sent)
+            self.drafts.mark_sent("card", draft, True)  # quitting before the answer keeps the mark
+        try:
+            async with self._busy("save"):
+                card = await self.backend.create_card(card_list.id, name, desc)
+        except BackendError as exc:
+            if draft:
+                self.drafts.mark_sent("card", draft, was_sent or exc.unsure)
+                self._failed_card_drafts[card_list.id] = draft
+            raise
+        finally:
+            if draft:
+                self._release_card_draft(draft)
+        if draft:
+            self.save_draft("card", draft, "")
+        if self._board_fetches:
+            self._made[card.id] = (next(self._ticks), card)
+        if self.snapshot and self.snapshot.board.id == card.board_id and not self.snapshot.card(card.id):
+            self.snapshot.add_card(card)
+            self.board_changed.publish(self.snapshot)
+        return card
+
     async def add_comment(self, card_id: str, text: str) -> Comment:
         async with self._busy("save"):
             comment = await self.backend.add_comment(card_id, text)
@@ -212,9 +276,41 @@ class Store:
         return self.drafts.get(kind, card_id)
 
     def save_draft(self, kind: Kind, card_id: str, text: str, base: str = "") -> None:
-        """Keep unsent text (blank text drops the draft) and tell the views, which mark cards with a draft."""
+        """Keep unsent text (blank text drops the draft) and tell the views, which mark cards with a draft. The
+        id is the card's, or for a new card its draft's (`<list id>/<token>`)."""
         if self.drafts.set(kind, card_id, text, base):
             self.drafts_changed.publish(card_id)
+
+    # Each new card's box has a draft of its own, `<list id>/<token>`, from the moment it opens until Trello has made
+    # the card. A draft is in use while a box has it open or its card is being sent, and is offered to the next box
+    # on the list only when it isn't.
+
+    @contextmanager
+    def new_card_box(self, list_id: str) -> Iterator[NewCardDraft]:
+        """The draft for a new card's box on the list, in use until the box is done: the list's draft that failed
+        last, else its oldest, not in use, or a new one."""
+        free = self.new_card_drafts(list_id)
+        if (failed := self._failed_card_drafts.get(list_id)) in free:
+            free.remove(failed)
+            free.insert(0, failed)
+        card_id = free[0] if free else new_card_id(list_id)
+        self._card_drafts_in_use[card_id] += 1
+        try:
+            yield NewCardDraft(card_id, self.drafts.get("card", card_id), len(free))
+        finally:
+            self._release_card_draft(card_id)
+
+    def new_card_drafts(self, list_id: str) -> list[str]:
+        """The ids of the list's new-card drafts that no box has open and aren't being sent, oldest first."""
+        return [card_id for card_id in self.drafts.ids("card", f"{list_id}/") if not self._card_drafts_in_use[card_id]]
+
+    def lists_with_card_drafts(self) -> set[str]:
+        return {card_id.partition("/")[0] for card_id in self.drafts.ids("card", "")}
+
+    def _release_card_draft(self, card_id: str) -> None:
+        self._card_drafts_in_use[card_id] -= 1
+        if not self._card_drafts_in_use[card_id]:
+            del self._card_drafts_in_use[card_id]
 
     def has_checklists(self, card_id: str) -> bool:
         """Whether the card's checklists are loaded and there is at least one (perhaps with no items yet)."""
@@ -339,6 +435,8 @@ class Store:
 
     def _replace(self, card: Card) -> None:
         """Patch the card into every loaded snapshot that has it, and tell their screens."""
+        if card.id in self._made:  # a reload that missed it shows it as it is now
+            self._made[card.id] = (self._made[card.id][0], card)
         if self.snapshot and self.snapshot.card(card.id):
             self.snapshot.replace_card(card)
             self.board_changed.publish(self.snapshot)
