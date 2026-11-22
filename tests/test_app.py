@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from textual.widgets import TextArea
+from textual.widgets import DataTable, TextArea
 
 from tui_trello import store as store_module
 from tui_trello.backend import BackendError
@@ -399,17 +399,36 @@ async def test_unread_counts_on_boards_lists_and_cards(app) -> None:
         snapshot = app.store.snapshot
         card = next(c for c in snapshot.cards if c.name == "Move cards between lists")  # two unread
         lines = screen_lines(app)
-        assert any(snapshot.list_named(card.list_id) in line and "●" in line for line in lines)  # its list
+        assert any(snapshot.list_named(card.list_id) in line and "🔔" in line for line in lines)  # its list
         await pilot.press("b")
         await pilot.pause()
-        assert "●3 Product roadmap" in "\n".join(screen_lines(app))  # the board picker
+        assert "🔔3 Product roadmap" in "\n".join(screen_lines(app))  # the board picker
         await pilot.press("escape")
         await pilot.pause()
-        assert "●2" in render.card_block(card, snapshot, unread=app.store.unread_by_card()[card.id]).text.plain
+        assert "🔔2" in render.card_block(card, snapshot, unread=app.store.unread_by_card()[card.id]).text.plain
+        await pilot.press("2")
+        await pilot.pause()
+        assert "●" not in "\n".join(screen_lines(app))
+        table = app.screen.query_one(DataTable)
+        column = table.columns[render.BELL]  # the triage column's header
+        assert column.label.plain == "🔔" and column.width == 3
+        row = table.get_row(card.id)
+        assert row[5].plain == "2" and row[5].style == f"bold {render.BELL_COLOUR}"  # the unread column
+        await pilot.press("1")
+        await pilot.pause()
         await app.store.mark_card_read(card.id)
         await pilot.pause()
         assert app.store.unread_by_card()[card.id] == 0
-        assert "●2" not in "\n".join(screen_lines(app))
+        assert "🔔2" not in "\n".join(screen_lines(app))
+
+
+def test_unread_badge_is_a_bell() -> None:
+    assert render.BELL == "\U0001F514"
+    assert render.unread_badge(3).plain == "🔔3"
+    assert render.unread_badge(3).cell_len == 3
+    assert render.unread_badge(0).plain == ""
+    card = next(c for c in DemoBackend()._boards["b-product"].cards if c.comment_count)
+    assert render.badges(card, unread=2).plain.startswith("🔔2 ") and "●" not in render.badges(card, unread=2).plain
 
 
 async def test_open_notification_loads_its_board(app) -> None:

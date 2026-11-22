@@ -5,7 +5,7 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Static
 
-from tui_trello.ui.render import BELL_COLOUR
+from tui_trello.ui.render import BELL, BELL_COLOUR
 
 
 class Bell(Static):
@@ -21,4 +21,4 @@ class Bell(Static):
 
     def redraw(self) -> None:
         count = self.app.store.unread_count
-        self.update(Text(f"🔔 {count} unread", style=f"bold {BELL_COLOUR}") if count else "")
+        self.update(Text(f"{BELL} {count} unread", style=f"bold {BELL_COLOUR}") if count else "")

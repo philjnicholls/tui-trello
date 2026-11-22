@@ -25,7 +25,7 @@ from tui_trello.ui.widgets.spinner import Spinner
 GROUP_STYLES = {"Overdue": "bold red", "Today": "bold yellow", "Done": "bold green"}
 LOCATION_WIDTH = 30
 DUE_WIDTH = 9
-BADGES_WIDTH = 17
+BADGES_WIDTH = 18
 GAPS = 6
 
 

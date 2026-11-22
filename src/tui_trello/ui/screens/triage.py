@@ -57,7 +57,8 @@ class TriageScreen(BoardScreen):
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
-        for label, width in [("List", 12), ("Card", None), ("Labels", 18), ("Due", 9), ("✎", 3), ("●", 3), ("Who", 8)]:
+        for label, width in [("List", 12), ("Card", None), ("Labels", 18), ("Due", 9), ("✎", 3), (render.BELL, 3),
+                             ("Who", 8)]:
             table.add_column(label, width=width, key=label)
 
     def redraw(self) -> None:
@@ -76,7 +77,7 @@ class TriageScreen(BoardScreen):
                 render.label_chips(card.labels),
                 render.due_text(card),
                 Text(str(card.comment_count or ""), style="dim"),
-                render.unread_badge(unread[card.id]),
+                Text(str(unread[card.id] or ""), style=f"bold {render.BELL_COLOUR}"),
                 render.members_text(card, snapshot),
                 key=card.id,
             )

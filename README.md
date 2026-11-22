@@ -122,7 +122,7 @@ the terminal to copy it (OSC 52); most terminals do, but GNOME Terminal and othe
 
 The app checks Trello for new notifications every minute while it runs. Each new one pops up in the corner and as a
 desktop notification, and the top bar of every view shows how many are unread with a red 🔔. Boards in the picker,
-lists and cards show a red `●` with the number of unread notifications about them. `4` lists them, newest first:
+lists and cards show a 🔔 with the number of unread notifications about them. `4` lists them, newest first:
 enter opens the card (loading its board if need be) and marks the card's notifications read, `d` marks one read
 without opening it, `D` marks them all, `C` replies to a comment. A reaction to one of your comments says which
 emoji it was. Read notifications are hidden; `u` shows or hides them, and the app remembers your choice (in

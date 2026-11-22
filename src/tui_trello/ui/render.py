@@ -10,7 +10,8 @@ from rich.text import Text
 from tui_trello.models import Card, CardContext, Label, Notification
 from tui_trello.ui.bidi import BidiText, visual
 
-BELL_COLOUR = "red"  # the top bar's 🔔 and every unread mark
+BELL = "🔔"  # U+1F514, two cells wide; the top bar's bell and every unread mark
+BELL_COLOUR = "red"  # the colour of `BELL` and its count
 
 
 def label_chips(labels: tuple[Label, ...] | list[Label]) -> Text:
@@ -41,8 +42,8 @@ def due_text(card: Card, now: datetime | None = None) -> Text:
 
 
 def unread_badge(count: int) -> Text:
-    """Unread notifications on a board, list or card, in the bell's colour; blank for none."""
-    return Text(f"●{count}", style=f"bold {BELL_COLOUR}") if count else Text("")
+    """A bell and the number of unread notifications on a board, list or card; blank for none."""
+    return Text(f"{BELL}{count}", style=f"bold {BELL_COLOUR}") if count else Text("")
 
 
 def badges(card: Card, now: datetime | None = None, *, due: bool = True, unread: int = 0) -> Text:
