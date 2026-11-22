@@ -1,7 +1,8 @@
 """Choices made in the app that it keeps between runs, in `$XDG_STATE_HOME/tui-trello/prefs.json`.
 
 Settings a user writes by hand live in config.toml (`tui_trello.config`); these are the ones a key toggles, such as
-`u` hiding read notifications, written back as they change. A missing or unreadable file gives the defaults.
+`u` hiding read notifications or `X` showing done checklist items, written back as they change. A missing or
+unreadable file gives the defaults.
 """
 
 from __future__ import annotations
@@ -34,6 +35,14 @@ class Prefs:
     @hide_read_notifications.setter
     def hide_read_notifications(self, hide: bool) -> None:
         self._set("hide_read_notifications", hide)
+
+    @property
+    def show_done_check_items(self) -> bool:
+        return bool(self._data.get("show_done_check_items", False))
+
+    @show_done_check_items.setter
+    def show_done_check_items(self, show: bool) -> None:
+        self._set("show_done_check_items", show)
 
     def _set(self, key: str, value: Any) -> None:
         if self._data.get(key) == value:

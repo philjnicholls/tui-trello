@@ -5,7 +5,8 @@ src/tui_trello/
   cli.py              argument parsing; picks a backend; starts the app
   config.py           Settings from env vars and ~/.config/tui-trello/config.toml
   drafts.py           unsent comments and description edits, per card, in ~/.local/state/tui-trello/drafts.json
-  prefs.py            choices the app remembers (hiding read notifications), in ~/.local/state/tui-trello/prefs.json
+  prefs.py            choices the app remembers (hiding read notifications, showing done checklist items),
+                      in ~/.local/state/tui-trello/prefs.json
   auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
   models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Reaction, Attachment,
                       Checklist, CheckItem, Notification;

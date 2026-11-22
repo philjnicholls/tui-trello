@@ -46,6 +46,8 @@ KEYS = [
         ("", "esc closes either and keeps what you wrote as a draft; empty the box to drop it"),
         ("t", "labels: enter puts one on or takes it off; type a new name to create one"),
         ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
+        ("X", "show or hide the ticked items of every checklist (hidden at first; remembered)",
+         {"browser", "mywork", "card"}),
         ("a", "attachments: enter opens one in the browser, ctrl+s saves it to Downloads, ctrl+y copies its link; "
               "attach a file, or paste a URL to attach a link"),
         ("C", "reply to a comment: it starts with a quote of it and @mentions its author; for a long one, pick what "

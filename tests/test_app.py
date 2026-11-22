@@ -281,7 +281,11 @@ async def test_checklist(app) -> None:
         assert card.checklist == (1, 4)
         await pilot.press("enter")
         await pilot.pause()
-        assert "☐ Update the README.md" in "\n".join(screen_lines(app))
+        lines = "\n".join(screen_lines(app))
+        assert "☐ Update the README.md" in lines
+        assert "Tasks  ☑ 1/4" in lines
+        assert "1 done hidden" in lines
+        assert "☑ Write the tests" not in lines  # ticked, so hidden
         await pilot.press("x")
         await pilot.pause()
         assert isinstance(app.screen, ChecklistPickerScreen)
@@ -298,7 +302,9 @@ async def test_checklist(app) -> None:
         await pilot.pause()
         assert app.store.find_card(card.id).checklist == (2, 5)
         assert app.store.snapshot.card(card.id).checklist == (2, 5)  # every view's badge
-        assert "☐ Ship it" in "\n".join(screen_lines(app))
+        lines = "\n".join(screen_lines(app))
+        assert "☐ Ship it" in lines
+        assert "2 done hidden" in lines  # "Update the README.md" ticked, and hidden with the first
 
 
 async def test_new_checklist_on_a_card_without_one(app) -> None:
@@ -1369,3 +1375,39 @@ async def test_failed_reload_forgets_the_cards_made_meanwhile() -> None:
         with pytest.raises(BackendError):
             await reload
         assert not app.store._made  # no fetch under way can have missed it
+
+
+async def test_done_check_items_hidden_until_shown(app, backend) -> None:
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "l")  # "Command palette: jump to any card": "Write the tests" ticked
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "☐ Update the README.md" in lines and "1 done hidden" in lines and "X: show done items" in lines
+        assert "☑ Write the tests" not in lines
+        await pilot.press("enter", "X")
+        await pilot.pause()
+        assert isinstance(app.screen, CardScreen)
+        lines = "\n".join(screen_lines(app))
+        assert "☑ Write the tests" in lines and "X: hide done items" in lines
+        assert "done hidden" not in lines
+        assert app.prefs.show_done_check_items
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, BrowserScreen)
+        assert "☑ Write the tests" in "\n".join(screen_lines(app))  # redrawn while under the card screen
+        await pilot.press("X")
+        await pilot.pause()
+        assert "☑ Write the tests" not in "\n".join(screen_lines(app))
+        await pilot.press("X")
+        await pilot.pause()
+        assert "☑ Write the tests" in "\n".join(screen_lines(app))
+        await pilot.press("2", "X")  # triage has no card pane
+        await pilot.pause()
+        assert app.prefs.show_done_check_items
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "l")
+        await pilot.pause()
+        assert "☑ Write the tests" in "\n".join(screen_lines(app))  # still shown, after a restart

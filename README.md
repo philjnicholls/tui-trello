@@ -60,7 +60,8 @@ board (`b`, then "مشروع").
 
 Descriptions and comments show their Markdown styled: bold, italic, strikethrough, `code`, links, @mentions, headings,
 lists, quotes, code blocks and tables, in either direction. Checklist items get the inline part: bold, italic,
-strikethrough, `code`, links and @mentions.
+strikethrough, `code`, links and @mentions. Ticked checklist items are hidden, with a count of them under each
+checklist; `X` shows them, and the app remembers the choice.
 
 ![arabic](docs/screenshots/arabic-browser.svg)
 
@@ -158,6 +159,7 @@ Vim-style throughout; `?` in the app shows the keys for the view you are in, and
 | `e`                    | edit the description (enter new line, ctrl+s saves)                                |
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |
 | `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
+| `X`                    | show or hide ticked checklist items in the card pane (hidden at first; remembered) |
 | `a`                    | attachments: enter opens one in the browser, `ctrl+s` saves it to Downloads,       |
 |                        | `ctrl+y` copies its link; attach a file, or paste a URL to attach a link           |
 | `ctrl+o`               | in a comment or description: attach a file and put its link in                     |

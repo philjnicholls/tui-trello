@@ -10,6 +10,7 @@ Motions apply to whatever has focus, so every list, table and scrolling pane mov
     ctrl+d / u  half a page           h / l       out / in (per layout)
     gt / gT     next / previous layout
     /           filter                :           command palette           ?   keys
+    X           show or hide done checklist items, in every card pane (remembered)
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from rich.text import Text
 from textual import events, work
 from textual.app import App
 from textual.binding import Binding
+from textual.signal import Signal
 from textual.widgets import Input, TextArea
 
 from tui_trello.backend import Backend, BackendError
@@ -35,6 +37,7 @@ from tui_trello.ui.screens.mywork import MyWorkScreen
 from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import Choice, PickerScreen
 from tui_trello.ui.screens.triage import TriageScreen
+from tui_trello.ui.widgets.card_view import CardView
 
 keys_compat.install()
 
@@ -98,6 +101,7 @@ class TrelloApp(App):
         Binding("4", "switch_mode('notifications')", "Notifications"),
         Binding("b", "pick_board", "Boards"),
         Binding("r", "refresh", "Refresh"),
+        Binding("X", "toggle_done_check_items", "Done items", show=False),
         Binding("j,down", "motion('down')", "Down", show=False),
         Binding("k,up", "motion('up')", "Up", show=False),
         Binding("G,end", "motion('bottom')", "Bottom", show=False),
@@ -114,6 +118,8 @@ class TrelloApp(App):
         super().__init__(ansi_color=settings.transparent)
         self.settings = settings
         self.prefs = prefs or Prefs()
+        # Carries the new "shown" value of `prefs.show_done_check_items`, for every CardView on every screen.
+        self.done_check_items_toggled: Signal[bool] = Signal(self, "done_check_items_toggled")
         self.store = Store(self, backend, drafts)
         self.pending_chord = ""
 
@@ -156,6 +162,16 @@ class TrelloApp(App):
     async def action_cycle_mode(self, step: int) -> None:
         modes = list(self.MODES)
         await self.switch_mode(modes[(modes.index(self.current_mode) + step) % len(modes)])
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "toggle_done_check_items":
+            return bool(self.screen.query(CardView))  # only where a card pane is
+        return True
+
+    def action_toggle_done_check_items(self) -> None:
+        """`X`: show or hide the ticked items of every checklist, in every card pane; remembered."""
+        self.prefs.show_done_check_items = not self.prefs.show_done_check_items
+        self.done_check_items_toggled.publish(self.prefs.show_done_check_items)
 
     def action_toggle_help(self) -> None:
         if not isinstance(self.screen, KeysScreen):

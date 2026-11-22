@@ -1,5 +1,6 @@
 """A card's details: header, description, attachments, checklists and comments. Used as the browser's preview pane
-and the card screen. With no card to show, it shows a tip on using the app instead, a new one every so often."""
+and the card screen. Ticked checklist items are hidden, with a count, until `X` shows them. With no card to show, it
+shows a tip on using the app instead, a new one every so often."""
 
 from __future__ import annotations
 
@@ -14,7 +15,14 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static
 
 from tui_trello.backend import BackendError
-from tui_trello.models import Attachment, Card, CardContext, Checklist, Comment
+from tui_trello.models import (
+    Attachment,
+    Card,
+    CardContext,
+    CheckItem,
+    Checklist,
+    Comment,
+)
 from tui_trello.ui import markdown, render
 from tui_trello.ui.bidi import BidiText, visual
 from tui_trello.ui.screens.picker import attachment_hint, attachment_marker
@@ -46,6 +54,7 @@ class CardView(VerticalScroll):
         super().__init__(id=id, classes="empty")
         self.card: Card | None = None
         self.context: CardContext | None = None
+        self.checklists: list[Checklist] | None = None  # as last drawn; None while they load or after an error
         self.tip = random.randrange(len(TIPS))
 
     def on_mount(self) -> None:
@@ -54,6 +63,7 @@ class CardView(VerticalScroll):
         self.app.store.drafts_changed.subscribe(self, self.on_draft_changed)
         self.app.store.notifications_changed.subscribe(self, lambda _: self.on_notifications_changed())
         self.app.store.comments_changed.subscribe(self, self.on_comments_changed)
+        self.app.done_check_items_toggled.subscribe(self, lambda _: self.redraw_checklists())
 
     def on_comments_changed(self, card_id: str) -> None:
         if self.card and self.card.id == card_id:
@@ -108,6 +118,7 @@ class CardView(VerticalScroll):
             self.load_attachments(card)
         else:
             self.show_attachments([])
+        self.checklists = None
         if card.checklist[1] or self.app.store.has_checklists(card.id):
             self.load_checklists(card)
         else:
@@ -133,19 +144,37 @@ class CardView(VerticalScroll):
             markdown.render(desc) if desc.strip() else Text("No description.", style="dim italic"))
 
     def show_checklists(self, checklists: list[Checklist]) -> None:
+        """Each checklist's heading and its items; the ticked ones only once `X` has shown them."""
+        self.checklists = checklists
+        shown = self.app.prefs.show_done_check_items
         self.query(".checklists").set_class(bool(checklists), "visible")
         parts: list[RenderableType] = []
         for checklist in checklists:
             done = checklist.done == len(checklist.items) and checklist.items
             parts.append(BidiText(Text.assemble(
                 markdown.inline(checklist.name, Style(bold=True)), "  ",
-                (f"{checklist.done}/{len(checklist.items)}", "green" if done else "dim"))))
-            for item in checklist.items:
-                parts.append(BidiText(
-                    Text.assemble(("☑ ", "green"), markdown.inline(item.name, Style(dim=True, strike=True)))
-                    if item.checked else Text.assemble(("☐ ", "dim"), markdown.inline(item.name))))
+                (f"☑ {checklist.done}/{len(checklist.items)}", "green" if done else "dim"))))
+            parts += [self.item_line(item) for item in checklist.items if shown or not item.checked]
+            if not shown and checklist.done:
+                parts.append(Text(f"{checklist.done} done hidden", style="dim italic"))
             parts.append(Text(""))
-        self.query_one("#card-checklists", Static).update(Group(*parts[:-1]))
+        if not any(checklist.done for checklist in checklists):
+            hint = "x: tick or add"
+        else:
+            hint = f"X: {'hide' if shown else 'show'} done items   x: tick or add"
+        parts[-1:] = [Text(hint, style="dim")] if checklists else []
+        self.query_one("#card-checklists", Static).update(Group(*parts))
+
+    @staticmethod
+    def item_line(item: CheckItem) -> BidiText:
+        return BidiText(
+            Text.assemble(("☑ ", "green"), markdown.inline(item.name, Style(dim=True, strike=True)))
+            if item.checked else Text.assemble(("☐ ", "dim"), markdown.inline(item.name)))
+
+    def redraw_checklists(self) -> None:
+        """After `X`: the same checklists again, without scrolling, so the reader keeps their place."""
+        if self.card is not None and self.checklists is not None:
+            self.show_checklists(self.checklists)
 
     def show_attachments(self, attachments: list[Attachment]) -> None:
         self.query(".attachments").set_class(bool(attachments), "visible")
@@ -171,6 +200,7 @@ class CardView(VerticalScroll):
         try:
             checklists = await self.app.store.checklists(card.id)
         except BackendError as exc:
+            self.checklists = None
             self.query(".checklists").add_class("visible")
             self.query_one("#card-checklists", Static).update(Text(str(exc), style="red"))
             return
