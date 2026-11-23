@@ -103,6 +103,8 @@ class Card:
     comment_count: int = 0
     checklist: tuple[int, int] = (0, 0)  # (checked, total)
     attachment_count: int = 0
+    closed: bool = False  # archived on Trello; loaded boards never hold one
+    list_closed: bool = False  # its list is archived; only known for a card fetched alone (backend.card)
 
     def comment_url(self, comment_id: str) -> str:
         """A link straight to one of the card's comments, as trello.com's "Copy link" on a comment gives."""
@@ -130,6 +132,8 @@ class Card:
             comment_count=badges.get("comments", 0),
             checklist=(badges.get("checkItemsChecked", 0), badges.get("checkItems", 0)),
             attachment_count=badges.get("attachments", 0),
+            closed=data.get("closed", False),
+            list_closed=(data.get("list") or {}).get("closed", False),
         )
 
 

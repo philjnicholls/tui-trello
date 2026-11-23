@@ -21,6 +21,7 @@ from tui_trello.ui.screens.picker import AttachmentPickerScreen, Choice
 OPENABLE_SCHEMES = {"http", "https", "mailto"}
 ICONS = {"board": "🗂 ", "card": "🃏 ", "comment": "💬 ", "attachment": "📎 ", "web": "🔗 "}
 KIND_NAMES = {"web": "web page"}  # the others are called what they are
+IN_BROWSER = "To see it on trello.com: L, then ctrl+o on its link."
 
 
 async def follow(app, url: str) -> Literal["screen", "board", "browser", "nothing"]:
@@ -48,6 +49,9 @@ async def follow(app, url: str) -> Literal["screen", "board", "browser", "nothin
             app.notify("That attachment is no longer on its card", severity="warning")
             return "nothing"
         card = await store.card_by_link(link.short_link)
+        if reason := unreachable(card):
+            app.notify(reason, severity="warning", timeout=8, markup=False)  # the name is other people's text
+            return "nothing"
         return "screen" if await show_card(app, card.id, card.board_id, link.comment_id) == "opened" else "nothing"
     except BackendError as exc:
         app.notify(str(exc), title="Could not follow the link", severity="error", markup=False)
@@ -63,6 +67,15 @@ async def open_board(app, board_id: str) -> Literal["board", "nothing"]:
         return "board"
     snapshot = app.store.snapshot
     return "board" if snapshot is not None and snapshot.board.id == board_id else "nothing"
+
+
+def unreachable(card: Card) -> str:
+    """Why a card fetched for a link can't be shown in the app, or "": it, or its list, is archived."""
+    if card.closed:
+        return f"“{card.name}” is archived. {IN_BROWSER}"
+    if card.list_closed:
+        return f"“{card.name}” is in an archived list. {IN_BROWSER}"
+    return ""
 
 
 def open_in_browser(app, url: str) -> None:
@@ -83,7 +96,7 @@ async def show_card(app, card_id: str, board_id: str, comment_id: str = "") -> L
         try:
             snapshot = await store.open_board(board_id)
         except BackendError as exc:
-            app.notify(str(exc), title="Could not open board", severity="error")
+            app.notify(str(exc), title="Could not open board", severity="error", markup=False)
             return "error"
         app.sub_title = snapshot.board.name
     if not store.find_card(card_id):

@@ -34,7 +34,7 @@ CHECK_ITEM_FIELDS = "name,state,pos"
 
 ATTACHMENT_FIELDS = "name,url,isUpload,bytes,mimeType,date,fileName"
 
-CARD_FIELDS = "name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges"
+CARD_FIELDS = "name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges,closed"
 
 # Errors raised before any of the request went out: Trello can't have acted on it. Any other (a read timeout, a
 # dropped connection) may come after Trello has.
@@ -100,7 +100,9 @@ class TrelloBackend:
         )
 
     async def card(self, card_id: str) -> Card:
-        return Card.from_api(await self._request("GET", f"/cards/{card_id}", fields=CARD_FIELDS))
+        # One request: the nested list says whether it is archived, which the card itself doesn't.
+        data = await self._request("GET", f"/cards/{card_id}", fields=CARD_FIELDS, list="true", list_fields="closed")
+        return Card.from_api(data)
 
     async def board(self, board_id: str) -> Board:
         return Board.from_api(await self._request("GET", f"/boards/{board_id}", fields="name,url,starred"))

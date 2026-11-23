@@ -55,6 +55,7 @@ async def test_board_snapshot() -> None:
     assert [lst.name for lst in snapshot.lists] == ["To do", "Done"]
     assert snapshot.cards_in("l1")[0].name == "Card"
     assert [c.id for c in snapshot.cards] == ["c1"]  # c2's list is archived
+    assert not any(c.closed for c in snapshot.cards)
     assert snapshot.members["m1"].initials == "AL"
     assert all(r.url.params["key"] == "KEY" and r.url.params["token"] == "TOKEN" for r in requests)
 
@@ -242,15 +243,20 @@ async def test_create_card_outcome_unknown(backend: TrelloBackend, unsure: bool)
 async def test_card_and_board_by_short_link() -> None:
     requests: list[httpx.Request] = []
     backend = make_backend(requests)
-    PAYLOADS["/1/cards/Xy12Zw34"] = {"id": "c9", "name": "Linked", "idList": "l1", "idBoard": "b1"}
+    PAYLOADS["/1/cards/Xy12Zw34"] = {"id": "c9", "name": "Linked", "idList": "l1", "idBoard": "b1",
+                                     "closed": True, "list": {"id": "l1", "closed": True}}
     PAYLOADS["/1/boards/AbCd1234"] = {"id": "b1", "name": "Roadmap", "url": "https://trello.com/b/AbCd1234/roadmap"}
     try:
-        assert (await backend.card("Xy12Zw34")).id == "c9"
+        card = await backend.card("Xy12Zw34")
+        assert card.id == "c9" and card.closed
         assert (await backend.board("AbCd1234")).name == "Roadmap"
     finally:
         del PAYLOADS["/1/cards/Xy12Zw34"], PAYLOADS["/1/boards/AbCd1234"]
     card_request, board_request = requests
     assert card_request.url.path == "/1/cards/Xy12Zw34" and card_request.url.params["fields"] == CARD_FIELDS
+    assert "closed" in CARD_FIELDS.split(",")
+    assert card_request.url.params["list"] == "true" and card_request.url.params["list_fields"] == "closed"
+    assert card.list_closed
     assert board_request.url.path == "/1/boards/AbCd1234"
 
 
