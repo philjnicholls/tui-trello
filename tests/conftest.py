@@ -12,6 +12,15 @@ def state_dir(tmp_path, monkeypatch):
     return tmp_path / "state"
 
 
+@pytest.fixture(autouse=True)
+def no_browser(monkeypatch):
+    """No test opens a real browser tab; one that opens a URL without patching webbrowser.open itself fails."""
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", lambda url, *args, **kwargs: opened.append(url))
+    yield
+    assert not opened, f"opened {opened} in a browser; a keypress probably reached the app instead of an input"
+
+
 @pytest.fixture
 def backend() -> DemoBackend:
     return DemoBackend()
