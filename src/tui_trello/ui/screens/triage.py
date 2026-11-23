@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Input, Static
 
+from tui_trello.emoji import with_emoji
 from tui_trello.models import Card, CardList
 from tui_trello.ui import render
 from tui_trello.ui.bidi import BidiText, visual
@@ -73,8 +74,9 @@ class TriageScreen(BoardScreen):
         unread = self.app.store.unread_by_card()
         for card in self.rows:
             table.add_row(
-                BidiText(Text(snapshot.list_named(card.list_id), style="bold"), wrap=False, align_rtl=False),
-                BidiText(card.name, wrap=False, align_rtl=False),
+                BidiText(Text(with_emoji(snapshot.list_named(card.list_id)), style="bold"), wrap=False,
+                         align_rtl=False),
+                BidiText(with_emoji(card.name), wrap=False, align_rtl=False),
                 render.label_chips(card.labels),
                 render.due_text(card),
                 Text(str(card.comment_count or ""), style="dim"),
@@ -86,7 +88,8 @@ class TriageScreen(BoardScreen):
         if current and current.id in ids:
             table.move_cursor(row=ids.index(current.id))
         self.query_one("#status", Static).update(Text.assemble(
-            visual(Text(snapshot.board.name, style="bold")), f"  {len(self.rows)}/{len(snapshot.cards)} cards",
+            visual(Text(with_emoji(snapshot.board.name), style="bold")),
+            f"  {len(self.rows)}/{len(snapshot.cards)} cards",
             ("  sort: ", "dim"), self.sort, (f"  filter: {self.query_text}" if self.query_text else "", "yellow"),
         ))
 
@@ -118,7 +121,8 @@ class TriageScreen(BoardScreen):
             return None
         current = self.current_card()
         lists = sorted(lists, key=lambda lst: not current or lst.id != current.list_id)  # the row's list first
-        choices = [Choice(lst.name, lst, "this card's list" if current and lst.id == current.list_id else "")
+        choices = [Choice(with_emoji(lst.name), lst,
+                          "this card's list" if current and lst.id == current.list_id else "", search=lst.name)
                    for lst in lists]
         return await self.pick_list("New card on which list?", choices)
 

@@ -13,7 +13,8 @@ Arabic name would lose its beginning instead of its end, and wrapped lines would
 
 :func:`visual_order` is a compact form of the Unicode Bidirectional Algorithm (UAX #9): strong types, weak-type
 rules for numbers, neutrals, implicit levels and reordering (L1, L2, L4), without explicit embeddings or isolates,
-which card names and comments don't use.
+which card names and comments don't use. Right-to-left runs are reversed by cluster (a character with the marks,
+skin tones and joined characters that attach to it), so emoji such as ❤️ and 👍🏽 and Arabic harakat stay whole.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from typing import TextIO
 
+from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.measure import Measurement
 from rich.text import Text
@@ -155,6 +157,39 @@ def _resolve_types(text: str, rtl: bool) -> list[str]:
     return types
 
 
+def _clusters(text: str) -> list[list[int]]:
+    """The indexes of `text` grouped into clusters: each starts with a base character and holds what attaches to
+    it: combining marks (variation selectors, keycap, harakat), skin-tone modifiers, tag characters, a zero-width
+    joiner with the character it joins, and the two regional indicators of a flag."""
+    clusters: list[list[int]] = []
+    joined = False
+    half_flag = False  # the last cluster is one regional indicator, waiting for its pair
+    for i, ch in enumerate(text):
+        indicator = "\U0001f1e6" <= ch <= "\U0001f1ff"
+        attaches = (unicodedata.category(ch) in ("Mn", "Me") or "\U0001f3fb" <= ch <= "\U0001f3ff"
+                    or "\U000e0020" <= ch <= "\U000e007f" or ch == "\u200d" or (indicator and half_flag))
+        half_flag = indicator and not (clusters and attaches)
+        if clusters and (joined or attaches):
+            clusters[-1].append(i)
+        else:
+            clusters.append([i])
+        joined = ch == "\u200d"
+    return clusters
+
+
+def cut(text: str, width: int) -> str:
+    """The start of `text` that fits `width` terminal cells, with "…" after it if there is more; a cluster (an emoji,
+    a flag) is never split."""
+    if cell_len(text) <= width:
+        return text
+    used = 0
+    for cluster in _clusters(text):
+        used += cell_len("".join(text[i] for i in cluster))
+        if used > width:
+            return text[:cluster[0]] + "…"
+    return text
+
+
 def visual_order(text: str, rtl: bool | None = None) -> list[int]:
     """The logical indexes of `text` (one line) in left-to-right display order."""
     if rtl is None:
@@ -176,25 +211,27 @@ def visual_order(text: str, rtl: bool | None = None) -> list[int]:
         i -= 1
         levels[i] = base_level
 
-    # L2: from the highest level down to the lowest odd one, reverse every run at that level or higher.
-    order = list(range(len(text)))
-    if not levels:
-        return order
-    lowest_odd = min((level for level in levels if level % 2), default=None)
-    if lowest_odd is None:
-        return order
-    for level in range(max(levels), lowest_odd - 1, -1):
-        i = 0
-        while i < len(order):
-            if levels[order[i]] >= level:
-                j = i
-                while j < len(order) and levels[order[j]] >= level:
-                    j += 1
-                order[i:j] = reversed(order[i:j])
-                i = j
-            else:
-                i += 1
-    return order
+    # L2: from the highest level down to the lowest odd one, reverse every run at that level or higher. Clusters
+    # move as one, at the level of their first character.
+    clusters = _clusters(text)
+    if not clusters:
+        return []
+    cluster_levels = [levels[cluster[0]] for cluster in clusters]
+    order = list(range(len(clusters)))
+    lowest_odd = min((level for level in cluster_levels if level % 2), default=None)
+    if lowest_odd is not None:
+        for level in range(max(cluster_levels), lowest_odd - 1, -1):
+            i = 0
+            while i < len(order):
+                if cluster_levels[order[i]] >= level:
+                    j = i
+                    while j < len(order) and cluster_levels[order[j]] >= level:
+                        j += 1
+                    order[i:j] = reversed(order[i:j])
+                    i = j
+                else:
+                    i += 1
+    return [i for n in order for i in clusters[n]]
 
 
 def _odd_levels(text: str, rtl: bool) -> set[int]:

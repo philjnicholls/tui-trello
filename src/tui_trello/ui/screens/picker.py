@@ -23,11 +23,13 @@ from textual.widgets import Input, Label, OptionList, TextArea
 from textual.widgets.option_list import Option
 
 from tui_trello.backend import BackendError
-from tui_trello.mentions import candidates, typing_mention
+from tui_trello.emoji import with_emoji
 from tui_trello.files import human_size
+from tui_trello.mentions import candidates, typing_mention
 from tui_trello.models import Attachment, Card, Checklist, Member
 from tui_trello.ui import clipboard, markdown
 from tui_trello.ui.bidi import BidiText, has_rtl
+from tui_trello.ui.commands import match_score
 
 T = TypeVar("T")
 
@@ -39,6 +41,8 @@ class Choice(Generic[T]):
     hint: str = ""  # dim text after the label
     marker: Text | None = None  # shown before the label, e.g. a label's colour
     text: Text | None = None  # the label styled, e.g. from Markdown; its plain text must be the label
+    search: str = ""  # the name as stored, if the label shows it differently (`:rocket:` as 🚀): typing matches it too
+    search_only: bool = False  # match `search` alone: the label is long, and fuzzy matching all of it would be slow
 
 
 class PickerScreen(ModalScreen[T | None]):
@@ -120,7 +124,7 @@ class PickerScreen(ModalScreen[T | None]):
         options = self.query_one(OptionList)
         if query:
             matcher = Matcher(query)
-            scored = [(matcher.match(c.label), c) for c in self.choices]
+            scored = [(self.score(matcher, c), c) for c in self.choices]
             matches = [c for score, c in sorted(scored, key=lambda sc: -sc[0]) if score > 0]
             prompts = [self.highlight(matcher, c) for c in matches]
         else:
@@ -133,9 +137,18 @@ class PickerScreen(ModalScreen[T | None]):
         options.highlighted = 0 if self.shown else None
 
     @staticmethod
+    def score(matcher: Matcher, choice: Choice) -> float:
+        """How well the query matches the label or, if it has one, the stored name."""
+        if choice.search_only:
+            return matcher.match(choice.search)
+        return match_score(matcher, choice.label, choice.search)
+
+    @staticmethod
     def highlight(matcher: Matcher, choice: Choice) -> Content:
         """The label, styled if the choice has `text`, with the matched letters highlighted."""
         content = Content.from_rich_text(choice.text) if choice.text else Content(choice.label)
+        if choice.search_only:
+            return content
         _, offsets = matcher.fuzzy_search.match(matcher.query, choice.label)
         for offset in offsets:
             if not choice.label[offset].isspace():
@@ -401,16 +414,16 @@ class LabelPickerScreen(PickerScreen):
 
         card = self.card
         on = {label.id for label in card.labels}
-        self.query_one(".title", Label).update(Text.assemble("Labels for “", visual(card.name), "”"))
+        self.query_one(".title", Label).update(Text.assemble("Labels for “", visual(with_emoji(card.name)), "”"))
         return [
-            Choice(label.name or label.color or "?", label, "✓" if label.id in on else "",
-                   Text("█ ", style=label.rich_colour))
+            Choice(with_emoji(label.name) or label.color or "?", label, "✓" if label.id in on else "",
+                   Text("█ ", style=label.rich_colour), search=label.name)
             for label in await self.app.store.labels(card.board_id)
         ]
 
     def extras(self, query: str) -> list[Choice]:
         name = query.strip()
-        if not name or any(c.label.lower() == name.lower() for c in self.choices):
+        if not name or any(name.lower() in (c.label.lower(), c.value.name.lower()) for c in self.choices):
             return []
         return [Choice(f"create “{name}”", ("create", name), marker=Text("+ ", style="bold green"))]
 
@@ -451,15 +464,16 @@ class ChecklistPickerScreen(PickerScreen):
 
         store = self.app.store
         if card := store.find_card(self.card_id):
-            self.query_one(".title", Label).update(Text.assemble("Checklist for “", visual(card.name), "”"))
+            self.query_one(".title", Label).update(Text.assemble("Checklist for “", visual(with_emoji(card.name)), "”"))
         self.checklists = await store.checklists(self.card_id)
         several = len(self.checklists) > 1
         choices = []
         for checklist in self.checklists:
             for item in checklist.items:
                 text = markdown.inline(item.name)
-                choices.append(Choice(text.plain, ("toggle", item), checklist.name if several else "",
-                                      Text("☑ ", style="green") if item.checked else Text("☐ ", style="dim"), text))
+                choices.append(Choice(text.plain, ("toggle", item), with_emoji(checklist.name) if several else "",
+                                      Text("☑ ", style="green") if item.checked else Text("☐ ", style="dim"), text,
+                                      search=item.name))
         return choices
 
     def extras(self, query: str) -> list[Choice]:
@@ -467,7 +481,7 @@ class ChecklistPickerScreen(PickerScreen):
         if not name or any(name.lower() in (c.label.lower(), c.value[1].name.lower()) for c in self.choices):
             return []
         plus = Text("+ ", style="bold green")
-        return [Choice(f"add “{name}” to {checklist.name}", ("add", checklist.id, name), marker=plus)
+        return [Choice(f"add “{name}” to {with_emoji(checklist.name)}", ("add", checklist.id, name), marker=plus)
                 for checklist in self.checklists] + [Choice(f"new checklist “{name}”", ("new", name), marker=plus)]
 
     def choose(self, choice: Choice) -> None:
@@ -526,8 +540,9 @@ class AttachmentPickerScreen(PickerScreen):
 
         store = self.app.store
         if card := store.find_card(self.card_id):
-            self.query_one(".title", Label).update(Text.assemble("Attachments on “", visual(card.name), "”"))
-        return [Choice(a.name, a, attachment_hint(a), attachment_marker(a))
+            title = Text.assemble("Attachments on “", visual(with_emoji(card.name)), "”")
+            self.query_one(".title", Label).update(title)
+        return [Choice(with_emoji(a.name), a, attachment_hint(a), attachment_marker(a), search=a.name)
                 for a in await store.attachments(self.card_id)]
 
     def extras(self, query: str) -> list[Choice]:
@@ -603,12 +618,12 @@ class LinkPickerScreen(PickerScreen[str]):
 
     def __init__(self, card: Card, choices: list[Choice[str]]) -> None:
         self.card = card
-        super().__init__(f"Links on “{card.name}”", choices)
+        super().__init__(f"Links on “{with_emoji(card.name)}”", choices)
 
     def on_mount(self) -> None:
         from tui_trello.ui.bidi import visual
 
-        self.query_one(".title", Label).update(Text.assemble("Links on “", visual(self.card.name), "”"))
+        self.query_one(".title", Label).update(Text.assemble("Links on “", visual(with_emoji(self.card.name)), "”"))
 
     def highlighted(self) -> str | None:
         highlighted = self.query_one(OptionList).highlighted

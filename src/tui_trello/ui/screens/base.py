@@ -20,6 +20,7 @@ import re
 import webbrowser
 from pathlib import Path
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import on, work
 from textual.binding import Binding
@@ -29,10 +30,12 @@ from textual.widgets import Input
 
 from tui_trello import quote
 from tui_trello.backend import BackendError
+from tui_trello.emoji import with_emoji
 from tui_trello.models import REACTIONS, BoardSnapshot, Card, CardList, Comment
 from tui_trello.query import CardQuery
 from tui_trello.store import NewCardDraft
-from tui_trello.ui import clipboard
+from tui_trello.ui import clipboard, markdown
+from tui_trello.ui.bidi import cut
 from tui_trello.ui.screens.picker import (
     AttachmentPickerScreen,
     ChecklistPickerScreen,
@@ -55,6 +58,7 @@ class TopBar(Horizontal):
     """
 
 
+COMMENT_LABEL = 60  # terminal cells of a comment, or of a part of one, shown (and matched) in a picker
 FILTER_HELP = "words  #label  @member  list:name  !overdue  !due    enter: apply   esc: clear"
 
 
@@ -90,8 +94,9 @@ class CardActionsScreen(Screen):
         if not (card and context):
             return
         lists = context.lists_for(card)
-        choices = [Choice(lst.name, lst.id, "current" if lst.id == card.list_id else "") for lst in lists]
-        list_id = await self.app.push_screen_wait(PickerScreen(f"Move “{card.name}” to…", choices))
+        choices = [Choice(with_emoji(lst.name), lst.id, "current" if lst.id == card.list_id else "", search=lst.name)
+                   for lst in lists]
+        list_id = await self.app.push_screen_wait(PickerScreen(f"Move “{with_emoji(card.name)}” to…", choices))
         if list_id is None or list_id == card.list_id:
             return
         try:
@@ -99,12 +104,12 @@ class CardActionsScreen(Screen):
         except BackendError as exc:
             self.notify(str(exc), severity="error")
         else:
-            self.notify(f"Moved to {next(lst.name for lst in lists if lst.id == list_id)}")
+            self.notify(f"Moved to {with_emoji(next(lst.name for lst in lists if lst.id == list_id))}")
 
     @work
     async def action_comment(self) -> None:
         if card := self.current_card():
-            await write_comment(self, card.id, card.board_id, f"Comment on “{card.name}”")
+            await write_comment(self, card.id, card.board_id, f"Comment on “{with_emoji(card.name)}”")
 
     @work
     async def action_edit_description(self) -> None:
@@ -124,7 +129,7 @@ class CardActionsScreen(Screen):
             store.save_draft("desc", card.id, "" if text == base else text, base=base)
 
         desc = await self.app.push_screen_wait(TextPromptScreen(
-            f"Description of “{card.name}”", mentions=lambda: store.members(board_id), multiline=True,
+            f"Description of “{with_emoji(card.name)}”", mentions=lambda: store.members(board_id), multiline=True,
             text=draft.text if draft else card.desc, notice=notice, on_change=keep,
             attach=lambda path: attach_for_text(self, card.id, path)))
         current = store.find_card(card.id) or card
@@ -167,11 +172,12 @@ class CardActionsScreen(Screen):
             return None
         choices = []
         for comment in comments:
-            text = " ".join(comment.text.split())
             when = f"{comment.date:%d %b}" if comment.date else ""
             reactions = " ".join(f"{native}{n}" for _, native, n, _ in comment.reaction_counts(me_id))
-            choices.append(Choice(f"{comment.author}: {text[:60]}{'…' if len(text) > 60 else ''}", comment,
-                                  "  ".join(part for part in (when, reactions) if part)))
+            shown, search = label_and_search(comment.text)
+            choices.append(Choice(f"{comment.author}: {shown}", comment,
+                                  "  ".join(part for part in (when, reactions) if part),
+                                  search=f"{comment.author}: {search}"))
         return await self.app.push_screen_wait(PickerScreen(title, choices))
 
     @work
@@ -244,6 +250,17 @@ class CardActionsScreen(Screen):
             self.app.action_follow_link(url)  # a worker of the app's: this screen may be popped by the link
 
 
+def label_and_search(source: str, full: bool = False) -> tuple[str, str]:
+    """What a picker shows of some Markdown text, and what it matches: the text as rendered, on one line and cut to
+    `COMMENT_LABEL` cells unless `full`; and the same text as stored when that is as short (so a shortcode's name
+    finds its emoji), else the rendered text cut to `COMMENT_LABEL`. Fuzzy matching is exponential in the query's
+    repeated letters, so it never sees more than that."""
+    shown = " ".join(markdown.plain(source).split())
+    cut_label = cut(shown, COMMENT_LABEL)
+    stored = " ".join(source.split())
+    return shown if full else cut_label, stored if cell_len(stored) <= COMMENT_LABEL else cut_label
+
+
 async def write_comment(screen: Screen, card_id: str, board_id: str, title: str, start: str = "") -> None:
     """Open the comment editor on the card's draft, with `start` (a reply's quote) after it, and send it. The card
     needn't be on a loaded board (a reply from Notifications)."""
@@ -274,13 +291,17 @@ async def reply_to(screen: Screen, card_id: str, card_name: str, board_id: str, 
     quoted = text
     if not quote.fits(text):
         start = quote.shorten(text)
-        choices = [Choice(" ".join(start.split()), start, "the start")]
-        choices += [Choice(" ".join(part.split()), part) for part in quote.parts(text) if part != start]
+        label, search = label_and_search(start, full=True)
+        choices = [Choice(label, start, "the start", search=search, search_only=True)]
+        for part in quote.parts(text):
+            if part != start:
+                label, search = label_and_search(part, full=True)
+                choices.append(Choice(label, part, search=search, search_only=True))
         quoted = await screen.app.push_screen_wait(PickerScreen(f"{author}'s comment is long: quote which part?",
                                                                 choices))
         if quoted is None:
             return
-    await write_comment(screen, card_id, board_id, f"Reply to {author} on “{card_name}”",
+    await write_comment(screen, card_id, board_id, f"Reply to {author} on “{with_emoji(card_name)}”",
                         quote.reply(quoted, username))
 
 
@@ -348,10 +369,10 @@ class ListScreen(CardActionsScreen):
         return self.app.screen, self.focused, card.id if card else None
 
     def list_label(self, card_list: CardList) -> str:
-        return card_list.name
+        return with_emoji(card_list.name)
 
     def new_card_toast(self, card: Card, card_list: CardList) -> str:
-        return f"Added “{card.name}” to {self.list_label(card_list)}"
+        return f"Added “{with_emoji(card.name)}” to {self.list_label(card_list)}"
 
     async def pick_list(self, title: str, choices: list[Choice[CardList]]) -> CardList | None:
         return await self.app.push_screen_wait(PickerScreen(title, choices))
@@ -367,8 +388,8 @@ class ListScreen(CardActionsScreen):
         name, _ = split_card_text(draft.text)
         snapshot = self.app.store.snapshot
         if name and snapshot and any(card.name == name for card in snapshot.cards_in(card_list.id)):
-            return (f"This card may already have been made on Trello: “{name}” is on {card_list.name} already; "
-                    f"check before sending{of}")
+            return (f"This card may already have been made on Trello: “{with_emoji(name)}” is on "
+                    f"{with_emoji(card_list.name)} already; check before sending{of}")
         return f"This card may already have been made on Trello: check before sending{of}"
 
     @work
@@ -381,7 +402,7 @@ class ListScreen(CardActionsScreen):
         store = self.app.store
         with store.new_card_box(card_list.id) as box:
             text = await self.app.push_screen_wait(TextPromptScreen(
-                f"New card in “{card_list.name}”", text=box.draft.text if box.draft else "",
+                f"New card in “{with_emoji(card_list.name)}”", text=box.draft.text if box.draft else "",
                 notice=self.new_card_notice(card_list, box), hint="the lines after the first are the description",
                 on_change=lambda text: store.save_draft("card", box.id, text), strip=False))
         if not text:

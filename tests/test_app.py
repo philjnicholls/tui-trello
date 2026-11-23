@@ -295,6 +295,7 @@ async def test_checklist(app) -> None:
         await pilot.pause()
         assert isinstance(app.screen, ChecklistPickerScreen)
         assert app.screen.choices[1].label == "Update the README.md"  # matched as shown, without the backticks
+        assert app.screen.choices[1].search == "Update the `README.md`"  # and as stored
         await pilot.press("down", "enter")  # tick the second item
         await pilot.pause()
         assert app.store.find_card(card.id).checklist == (2, 4)
@@ -522,6 +523,25 @@ async def test_reply_to_a_long_comment_picks_what_to_quote(app) -> None:
         await pilot.press(*"cache", "enter")
         await pilot.pause()
         assert app.screen.query_one(TextArea).text == "draft\n\n> Can we cache the lists?\n\n"
+
+
+async def test_comment_and_quote_pickers_show_emoji(app) -> None:
+    async with app.run_test(size=(120, 80)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        long = "The picker is slow on big boards. " * 10
+        await app.store.add_comment(card.id, f"{long.strip()}\n\nCan we :tada: cache the lists?")
+        await pilot.press("C")
+        await pilot.pause()
+        comment = app.screen.choices[0]
+        assert ":tada:" not in comment.label  # cut at 60 characters, so the emoji is beyond the label
+        assert ":tada:" not in comment.search  # only the start is searched: fuzzy matching all of it is slow
+        await pilot.press("enter")
+        await pilot.pause()
+        parts = {c.label: c for c in app.screen.choices}
+        assert "Can we 🎉 cache the lists?" in parts
+        assert parts["Can we 🎉 cache the lists?"].search == "Can we :tada: cache the lists?"
 
 
 async def test_reply_from_notifications(app) -> None:
@@ -1463,6 +1483,23 @@ async def test_follow_card_link(app) -> None:
         assert app.screen.current_card().name == "Move cards between lists"
         await pilot.press("escape")
         assert isinstance(app.screen, BrowserScreen)
+
+
+async def test_link_picker_shows_emoji_in_names_and_searches_the_stored_name(app, backend) -> None:
+    moving = card_named(backend, "Move cards between lists")
+    for snapshot in backend._boards.values():  # a bare card URL, whose label is the card's name
+        snapshot.cards = [replace(c, name=":rocket: " + c.name) if c is moving
+                          else replace(c, desc=moving.url) if c.name == "Offline cache for boards" else c
+                          for c in snapshot.cards]
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        assert [c.label for c in app.screen.choices][:1] == ["🚀 Move cards between lists"]
+        assert app.screen.choices[0].search == ":rocket: Move cards between lists"
+        await pilot.press(*"rocket")
+        await settle(pilot)
+        assert [c.label for c in app.screen.shown] == ["🚀 Move cards between lists"]
 
 
 async def test_follow_comment_link(app, backend) -> None:

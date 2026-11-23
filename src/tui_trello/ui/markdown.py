@@ -5,7 +5,8 @@ becomes styled `Text` laid out by `BidiText`, which wraps and reorders RTL lines
 styling. List markers and quote bars hang outside the text, and sit on the right of RTL items.
 
 Supported: paragraphs and line breaks, **bold**, *italic*, ~~strikethrough~~, `code`, links (and bare URLs), @mentions,
-headings, bullet and numbered lists (nested), block quotes, code blocks, rules, tables and images (shown by name).
+headings, bullet and numbered lists (nested), block quotes, code blocks, rules, tables and images (shown by name),
+emoji :shortcodes:.
 `inline()` renders just the inline part, for one-line text such as checklist items. With `clickable`, links and
 images carry a click action, `app.open_link(url)`, so a click on them is handled by the app.
 `links()` lists the links and images of a text, in order.
@@ -14,7 +15,8 @@ images carry a click action, `app.open_link(url)`, so a click on them is handled
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import lru_cache
 
 from markdown_it import MarkdownIt
 from markdown_it.tree import SyntaxTreeNode
@@ -25,10 +27,29 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
+from tui_trello.emoji import CACHE_LIMIT, with_emoji
 from tui_trello.ui.bidi import BidiText, base_is_rtl, visual
 
 # Trello turns single newlines into line breaks.
 PARSER = MarkdownIt("commonmark", {"breaks": True, "linkify": True}).enable(["table", "strikethrough", "linkify"])
+
+# An escaped colon stands in for itself as this character until the emoji are shown, so `\:tada:` stays literal.
+ESCAPED_COLON = "\ue000"
+
+
+def _protect_escaped_colons(state) -> None:
+    """Core rule, before `text_join` merges the text: mark an escaped colon (`text_special`) so no shortcode forms."""
+    def mark(tokens) -> None:
+        for token in tokens:
+            if token.type == "text_special" and token.markup == "\\:" and token.content == ":":
+                token.content = ESCAPED_COLON
+            if token.children:
+                mark(token.children)
+
+    mark(state.tokens)
+
+
+PARSER.core.ruler.before("text_join", "escaped_colon", _protect_escaped_colons)
 
 INLINE = {"strong": Style(bold=True), "em": Style(italic=True), "s": Style(strike=True)}
 CODE = Style(color="magenta")
@@ -47,6 +68,7 @@ MENTION_PATTERN = re.compile(r"(?<![\w@])@[\w.\-]+")
 class Link:
     text: str  # a link's text, an image's alt text; the URL for a bare URL
     url: str
+    stored: str = field(default="", compare=False)  # the text as written (shortcodes unshown), for a picker to search
 
 
 def render(source: str, *, clickable: bool = False) -> RenderableType:
@@ -72,13 +94,30 @@ def links(source: str, *, one_line: bool = False) -> list[Link]:
         if node.type in ("link", "image"):
             href = node.attrs.get("href" if node.type == "link" else "src")
             if href:
-                found.append(Link(_plain(node) or str(href), str(href)))
+                found.append(Link(_plain(node) or str(href), str(href), _stored(node)))
         for child in node.children:
             if node.type != "image":  # an image's children are its alt text
                 walk(child)
 
     walk(root)
     return found
+
+
+def plain(source: str, limit: int = 1000) -> str:
+    """One line of Markdown source as plain text, the way the card view shows it: emoji, escapes and code resolved.
+    A source over `limit` characters is cut first (at a space or line break if there is one near, with "…"), as the
+    text is meant to be short (a notification or the start of a comment). Short sources are cached: notifications
+    are drawn again on every resize."""
+    if len(source) > limit:
+        cut_at = max(source.rfind(" ", 0, limit), source.rfind("\n", 0, limit))
+        source = source[:cut_at if cut_at > limit // 2 else limit].rstrip() + "…"
+        return inline(source).plain
+    return _plain_short(source) if len(source) <= CACHE_LIMIT else inline(source).plain
+
+
+@lru_cache(maxsize=512)
+def _plain_short(source: str) -> str:
+    return inline(source).plain
 
 
 def _spaced(blocks: list[RenderableType]) -> list[RenderableType]:
@@ -161,7 +200,8 @@ def _inline(node: SyntaxTreeNode, style: Style = Style(), clickable: bool = Fals
     text = Text()
     for child in node.children:
         if child.type == "text":
-            _append_mentions(text, child.content, style)
+            bare_url = node.type == "link" and node.markup in ("linkify", "autolink")
+            _append_mentions(text, _shown(child.content, emoji=not bare_url), style)
         elif child.type in ("softbreak", "hardbreak"):
             text.append("\n")
         elif child.type == "code_inline":
@@ -188,6 +228,11 @@ def _click(href: object) -> Style:
     return Style(meta={"@click": ("app.open_link", (str(href),))}) if href else Style()
 
 
+def _shown(content: str, emoji: bool = True) -> str:
+    """Text content as drawn: shortcodes as emoji (unless `emoji` is off), escaped colons as colons."""
+    return (with_emoji(content) if emoji else content).replace(ESCAPED_COLON, ":")
+
+
 def _append_mentions(text: Text, content: str, style: Style) -> None:
     position = 0
     for match in MENTION_PATTERN.finditer(content):
@@ -197,8 +242,34 @@ def _append_mentions(text: Text, content: str, style: Style) -> None:
     text.append(content[position:], style)
 
 
+def _runs(node: SyntaxTreeNode, literal: bool = False) -> list[tuple[str, bool]]:
+    """The node's text as (text, literal) runs: text and escapes, which are shown as emoji, and code and line breaks
+    (a space), which are kept as they are. Under a bare URL nothing is shown as emoji."""
+    if node.type in ("text", "text_special"):
+        return [(node.content, literal)]
+    if node.type == "code_inline":
+        return [(node.content, True)]
+    if node.type in ("softbreak", "hardbreak"):
+        return [(" ", True)]
+    literal = literal or (node.type == "link" and node.markup in ("linkify", "autolink"))
+    return [run for child in node.children for run in _runs(child, literal)]
+
+
 def _plain(node: SyntaxTreeNode) -> str:
-    """The node's text, to tell which way it reads."""
-    if node.type in ("text", "code_inline"):
-        return node.content
-    return "".join(_plain(child) for child in node.children)
+    """The node's text as displayed (emoji shown, code untouched). Text runs are joined before the emoji are
+    found, so `:white\\_check\\_mark:` (three runs) forms one."""
+    out: list[str] = []
+    pending = ""
+    for text, literal in _runs(node):
+        if literal:
+            out += [_shown(pending), text]
+            pending = ""
+        else:
+            pending += text
+    out.append(_shown(pending))
+    return "".join(out)
+
+
+def _stored(node: SyntaxTreeNode) -> str:
+    """The node's text as written: `_plain` without the emoji."""
+    return "".join(text for text, _ in _runs(node)).replace(ESCAPED_COLON, ":")

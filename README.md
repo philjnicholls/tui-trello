@@ -62,7 +62,8 @@ board (`b`, then "مشروع").
 Descriptions and comments show their Markdown styled: bold, italic, strikethrough, `code`, links, @mentions, headings,
 lists, quotes, code blocks and tables, in either direction. Checklist items get the inline part: bold, italic,
 strikethrough, `code`, links and @mentions. Ticked checklist items are hidden, with a count of them under each
-checklist; `X` shows them, and the app remembers the choice.
+checklist; `X` shows them, and the app remembers the choice. Emoji written as `:name:` (`:tada:`, `:+1:`) show as
+the emoji, in card names and notifications too.
 
 ![arabic](docs/screenshots/arabic-browser.svg)
 

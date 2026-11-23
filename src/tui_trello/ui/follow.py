@@ -13,6 +13,7 @@ from textual.worker import WorkerCancelled
 
 from tui_trello import links
 from tui_trello.backend import BackendError
+from tui_trello.emoji import with_emoji
 from tui_trello.models import Card
 from tui_trello.ui import markdown
 from tui_trello.ui.screens.card import CardScreen
@@ -72,9 +73,9 @@ async def open_board(app, board_id: str) -> Literal["board", "nothing"]:
 def unreachable(card: Card) -> str:
     """Why a card fetched for a link can't be shown in the app, or "": it, or its list, is archived."""
     if card.closed:
-        return f"“{card.name}” is archived. {IN_BROWSER}"
+        return f"“{with_emoji(card.name)}” is archived. {IN_BROWSER}"
     if card.list_closed:
-        return f"“{card.name}” is in an archived list. {IN_BROWSER}"
+        return f"“{with_emoji(card.name)}” is in an archived list. {IN_BROWSER}"
     return ""
 
 
@@ -98,7 +99,7 @@ async def show_card(app, card_id: str, board_id: str, comment_id: str = "") -> L
         except BackendError as exc:
             app.notify(str(exc), title="Could not open board", severity="error", markup=False)
             return "error"
-        app.sub_title = snapshot.board.name
+        app.sub_title = with_emoji(snapshot.board.name)
     if not store.find_card(card_id):
         app.notify("That card has been archived or deleted.", severity="warning")
         return "gone"
@@ -131,15 +132,21 @@ async def link_choices(app, card: Card) -> list[Choice[str]]:
             continue
         seen.add(link.url)
         parsed = links.parse(link.url, store.link_hosts)
-        label = link.text if link.text != link.url else describe(app, parsed)
+        if link.text == link.url:  # a bare URL: named by what it points to
+            stored = describe(app, parsed)
+            label = with_emoji(stored)
+        else:
+            label, stored = link.text, link.stored
         kind = KIND_NAMES.get(parsed.kind, parsed.kind)
-        choices.append(Choice(label, link.url, f"{kind} · {source}", Text(ICONS[parsed.kind])))
+        # `:rocket:` in a name: typing it finds it too
+        choices.append(Choice(label, link.url, f"{kind} · {source}", Text(ICONS[parsed.kind]),
+                              search=stored if stored != label else ""))
     return choices
 
 
 def describe(app, link: links.TrelloLink) -> str:
-    """A name for a link whose text is just its URL: the card or board's name if it is loaded, an attachment's file
-    name, a web page's host and path."""
+    """A name for a link whose text is just its URL, as stored (shortcodes unshown): the card or board's name if it
+    is loaded, an attachment's file name, a web page's host and path."""
     store = app.store
     if link.kind in ("card", "comment") and (card := store.known_card(link.short_link)):
         return card.name

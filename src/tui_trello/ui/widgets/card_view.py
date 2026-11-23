@@ -15,6 +15,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static
 
 from tui_trello.backend import BackendError
+from tui_trello.emoji import with_emoji
 from tui_trello.models import (
     Attachment,
     Card,
@@ -127,7 +128,7 @@ class CardView(VerticalScroll):
         self.set_class(card is None, "empty")
         if card is None:
             return
-        self.query_one("#card-title", Static).update(BidiText(card.name))
+        self.query_one("#card-title", Static).update(BidiText(with_emoji(card.name)))
         self.show_meta(card, context)
         self.show_description(card.desc)
         self.load_comments(card)  # clears the comments of another card; the top bar's spinner shows it loading
@@ -145,7 +146,7 @@ class CardView(VerticalScroll):
 
     def show_meta(self, card: Card, context: CardContext) -> None:
         meta = Text.assemble(
-            ("in ", "dim"), visual(Text(context.location(card), style="bold")), "  ",
+            ("in ", "dim"), visual(Text(with_emoji(context.location(card)), style="bold")), "  ",
             render.badges(card, unread=self.app.store.unread_by_card()[card.id]), "\n",
         )
         names = [context.members[m].full_name for m in card.member_ids if m in context.members]
@@ -201,7 +202,7 @@ class CardView(VerticalScroll):
 
     def show_attachments(self, attachments: list[Attachment]) -> None:
         self.query(".attachments").set_class(bool(attachments), "visible")
-        rows = [Text.assemble(attachment_marker(a), visual(a.name), ("  " + attachment_hint(a), "dim"))
+        rows = [Text.assemble(attachment_marker(a), visual(with_emoji(a.name)), ("  " + attachment_hint(a), "dim"))
                 for a in attachments]
         if rows and self.KEY_HINTS:
             rows.append(Text("a: open, save or add", style="dim"))

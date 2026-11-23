@@ -12,12 +12,13 @@ from textual.containers import Horizontal
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
+from tui_trello.emoji import with_emoji
 from tui_trello.models import Card, CardList
 from tui_trello.ui import render
 from tui_trello.ui.bidi import visual
 from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar, index_of
-from tui_trello.ui.widgets.card_view import CardView
 from tui_trello.ui.widgets.bell import Bell
+from tui_trello.ui.widgets.card_view import CardView
 from tui_trello.ui.widgets.spinner import Spinner
 
 
@@ -76,7 +77,7 @@ class BrowserScreen(BoardScreen):
         unread = self.app.store.unread_by_card()
         self.drafted = self.app.store.lists_with_card_drafts()
         lists.set_options(
-            Option(Text.assemble(visual(lst.name), (f"  {self.count(lst.id)}", "dim"),
+            Option(Text.assemble(visual(with_emoji(lst.name)), (f"  {self.count(lst.id)}", "dim"),
                                  (" ✐" if lst.id in self.drafted else "", "yellow"), "  ",  # an unsent new card
                                  render.unread_badge(sum(unread[c.id] for c in self.matching(lst.id)))), id=lst.id)
             for lst in snapshot.lists
@@ -114,9 +115,10 @@ class BrowserScreen(BoardScreen):
     def update_crumbs(self) -> None:
         if snapshot := self.snapshot:
             card = self.current_card()
-            parts = [snapshot.board.name, snapshot.list_named(self.list_id) if self.list_id else ""]
+            parts = [with_emoji(snapshot.board.name),
+                     with_emoji(snapshot.list_named(self.list_id)) if self.list_id else ""]
             if card and self.query_one("#cards", OptionList).has_focus:
-                parts.append(card.name)
+                parts.append(with_emoji(card.name))
             crumbs = Text(" › ", style="bold").join(visual(Text(p, style="bold")) for p in parts if p)
             if self.query_text:
                 crumbs.append(f"   filter: {self.query_text}", style="yellow")

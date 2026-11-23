@@ -235,3 +235,17 @@ async def test_archived_toast_is_plain_text_and_stays_8_seconds() -> None:
         await settle(pilot)
         [note] = app._notifications
         assert "a [b]b[/b]" in note.message and note.markup is False and note.timeout == 8
+
+
+@pytest.mark.parametrize(("extra", "words"), [({}, "is archived."), (OPEN_CARD_IN_ARCHIVED_LIST, "is in an archived list.")])
+async def test_archived_toast_shows_the_cards_emoji_and_keeps_markup_off(extra: dict, words: str) -> None:
+    requests: list[str] = []
+    named = LINKED | extra | {"name": ":rocket: [bold]ticket[/bold]"}
+    app = trello_app({"/1/cards/PAqU36DV": named}, requests)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_card(app, pilot, requests)
+        await follow.follow(app, URL)
+        await settle(pilot)
+        [(message, _, _)] = toasts(app)
+        assert message.startswith(f"“🚀 [bold]ticket[/bold]” {words}")
+        assert [n.markup for n in app._notifications] == [False]

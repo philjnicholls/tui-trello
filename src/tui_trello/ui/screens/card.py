@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Static
 
+from tui_trello.emoji import with_emoji
 from tui_trello.models import Card
 from tui_trello.ui.bidi import visual
 from tui_trello.ui.screens.base import CardActionsScreen, TopBar
@@ -46,7 +47,7 @@ class CardScreen(CardActionsScreen):
     def redraw(self) -> None:
         if context := self.app.store.context_for(self.card_id):
             card = context.card(self.card_id)
-            self.query_one("#location", Static).update(visual(Text(context.location(card), style="bold")))
+            self.query_one("#location", Static).update(visual(Text(with_emoji(context.location(card)), style="bold")))
             self.query_one(CardView).show(card, context, self.comment_id)
 
     def show_comment(self, comment_id: str) -> None:

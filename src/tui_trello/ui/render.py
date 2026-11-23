@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from rich.text import Text
 
+from tui_trello.emoji import with_emoji
 from tui_trello.models import Card, CardContext, Label, Notification
 from tui_trello.ui.bidi import BidiText, visual
 
@@ -17,7 +18,8 @@ BELL_COLOUR = "red"  # the colour of `BELL` and its count
 def label_chips(labels: tuple[Label, ...] | list[Label]) -> Text:
     text = Text()
     for label in labels:
-        text.append_text(visual(Text(f" {label.name or ' '} ", style=f"bold black on {label.rich_colour}")))
+        name = with_emoji(label.name) or " "
+        text.append_text(visual(Text(f" {name} ", style=f"bold black on {label.rich_colour}")))
         text.append(" ")
     return text
 
@@ -72,7 +74,7 @@ def members_text(card: Card, context: CardContext) -> Text:
 def card_block(card: Card, context: CardContext, now: datetime | None = None, unread: int = 0) -> BidiText:
     """A card summary for columns: the name (wrapped), then labels, badges (`unread` notifications first) and
     members."""
-    block = Text(card.name, style="bold")
+    block = Text(with_emoji(card.name), style="bold")
     meta = Text.assemble(label_dots(card.labels), " " if card.labels else "", badges(card, now, unread=unread), " ",
                          members_text(card, context))
     if meta.plain.strip():
@@ -103,15 +105,16 @@ def notification_summary(notification: Notification) -> str:
     """One line in plain words: "Grace Hopper mentioned you on Move cards between lists"."""
     n = notification
     if n.type == "cardDueSoon":
-        return f"{n.card_name} is due soon"
+        return f"{with_emoji(n.card_name)} is due soon"
     if n.type == "reactionAdded":
         emoji = "".join(n.reactions)
-        return f"{n.creator or 'Someone'} reacted {emoji + ' ' if emoji else ''}to your comment on {n.card_name}"
+        card = with_emoji(n.card_name)
+        return f"{n.creator or 'Someone'} reacted {emoji + ' ' if emoji else ''}to your comment on {card}"
     verb = NOTIFICATION_VERBS.get(n.type) or re.sub(r"(?<!^)(?=[A-Z])", " ", n.type).lower()
-    subject = n.card_name if n.card_id else n.board_name
+    subject = with_emoji(n.card_name if n.card_id else n.board_name)
     line = " ".join(part for part in (n.creator or "Trello", verb, subject) if part)
     if n.type == "changeCard" and n.list_name:
-        line += f" to {n.list_name}"
+        line += f" to {with_emoji(n.list_name)}"
     return line
 
 

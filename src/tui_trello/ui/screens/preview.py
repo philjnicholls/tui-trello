@@ -17,6 +17,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, Static
 
 from tui_trello import links
+from tui_trello.emoji import with_emoji
 from tui_trello.backend import BackendError
 from tui_trello.files import human_size
 from tui_trello.models import Attachment, CardPreview, Member
@@ -157,7 +158,7 @@ class LinkPreviewScreen(ModalScreen[str | None]):
 
     @staticmethod
     def attachment_lines(attachment: Attachment, preview: CardPreview) -> Group:
-        lines = [Text.assemble(("📎 " if attachment.is_upload else "🔗 "), visual(Text(attachment.name, style="bold")))]
+        lines = [Text.assemble(("📎 " if attachment.is_upload else "🔗 "), visual(Text(with_emoji(attachment.name), style="bold")))]
         if attachment.is_upload:
             facts = [("File", attachment.file_name or attachment.name),
                      ("Size", human_size(attachment.size) if attachment.size else ""),
@@ -166,8 +167,8 @@ class LinkPreviewScreen(ModalScreen[str | None]):
             lines += [Text.assemble((f"{name:<6}", "dim"), value) for name, value in facts if value]
         else:
             lines += [Text.assemble(("Link  ", "dim"), attachment.url), Text(attachment_hint(attachment), style="dim")]
-        lines += [Text(""), Text.assemble(("On card  ", "dim"), visual(Text(preview.card.name, style="bold"))),
-                  Text.assemble(("         ", "dim"), visual(Text(preview.location)),
+        lines += [Text(""), Text.assemble(("On card  ", "dim"), visual(Text(with_emoji(preview.card.name), style="bold"))),
+                  Text.assemble(("         ", "dim"), visual(Text(with_emoji(preview.location))),
                                 (f"  ({ARCHIVED[preview.archived].lower()})" if preview.archived else "", "yellow"))]
         return Group(*lines)
 

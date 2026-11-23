@@ -87,3 +87,15 @@ def test_explicit_mode_in_tmux(monkeypatch) -> None:
         assert calls[-1] == ("set", "-p", "-t", "%7", "allow-passthrough", "on")
     assert out.getvalue().endswith("\x1bPtmux;\x1b\x1b[8h\x1b\\")
     assert calls[-1] == ("set", "-pu", "-t", "%7", "allow-passthrough")  # put back as it was
+
+
+@pytest.mark.parametrize("emoji", ["❤️", "👍🏽", "👨‍👩‍👦", "1️⃣"])
+def test_visual_keeps_emoji_whole(emoji: str) -> None:
+    assert emoji in visual(f"مرحبا {emoji} عالم").plain
+    assert visual(f"مرحبا {emoji}").plain.startswith(emoji)
+
+
+def test_visual_keeps_harakat_on_its_letter() -> None:
+    shalom = "كَتَبَ"  # kaf, teh and beh, each with a fatha
+    mashal = "بَ" + "تَ" + "كَ"  # the same clusters, last first
+    assert visual(shalom + " abc").plain == "abc " + mashal

@@ -32,10 +32,11 @@ from tui_trello import links
 from tui_trello.backend import Backend, BackendError
 from tui_trello.config import Settings
 from tui_trello.drafts import Drafts
+from tui_trello.emoji import with_emoji
+from tui_trello.models import Notification
 from tui_trello.prefs import Prefs
 from tui_trello.store import Store
-from tui_trello.models import Notification
-from tui_trello.ui import desktop, follow, keys_compat, render
+from tui_trello.ui import desktop, follow, keys_compat, markdown, render
 from tui_trello.ui.commands import BoardCommands, CardCommands
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
@@ -239,7 +240,7 @@ class TrelloApp(App):
             self.sub_title = ""
             self.notify(str(exc), title="Could not open board", severity="error", timeout=10)
         else:
-            self.sub_title = snapshot.board.name
+            self.sub_title = with_emoji(snapshot.board.name)
 
     # -- notifications --------------------------------------------------------------------------------------------
 
@@ -264,9 +265,10 @@ class TrelloApp(App):
             self.notify(body, title=title)
         else:
             for notification in reversed(new):  # oldest first, so the newest toast is at the bottom
-                self.notify(notification.text, title=render.notification_summary(notification), timeout=8,
+                self.notify(markdown.plain(notification.text),
+                            title=render.notification_summary(notification), timeout=8,
                             markup=False)  # comments are other people's text
-            title, body = render.notification_summary(new[0]), new[0].text
+            title, body = render.notification_summary(new[0]), markdown.plain(new[0].text)
             if len(new) > 1:
                 body = f"and {len(new) - 1} more"
         if self.settings.desktop_notifications and not self.is_headless and self._driver is not None:
@@ -335,8 +337,9 @@ class TrelloApp(App):
     async def action_pick_board(self) -> None:
         async def choices() -> list[Choice[str]]:
             unread = self.store.unread_by_board()
-            return [Choice(board.name, board.id, "★" if board.starred else "",
-                           Text.assemble(render.unread_badge(unread[board.id]), " ") if unread[board.id] else None)
+            return [Choice(with_emoji(board.name), board.id, "★" if board.starred else "",
+                           Text.assemble(render.unread_badge(unread[board.id]), " ") if unread[board.id] else None,
+                           search=board.name)
                     for board in await self.store.boards()]
 
         # Opens straight away; typing while the boards load is kept.

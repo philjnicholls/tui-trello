@@ -15,8 +15,9 @@ from textual.widgets import Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
 from tui_trello.backend import BackendError
+from tui_trello.emoji import with_emoji
 from tui_trello.models import Notification
-from tui_trello.ui import render
+from tui_trello.ui import markdown, render
 from tui_trello.ui.bidi import fit
 from tui_trello.ui.follow import show_card
 from tui_trello.ui.screens.base import TopBar, reply_to
@@ -109,10 +110,10 @@ class NotificationsScreen(Screen):
                               fit(Text(render.notification_summary(n), style="bold" if n.unread else ""),
                                   summary_width, rtl=False),
                               " ", (render.ago(n.date, now).rjust(AGO_WIDTH), "dim"))
-        detail = Text(n.board_name, style="dim")
+        detail = Text(with_emoji(n.board_name), style="dim")
         if n.text:
             detail.append(" · ", style="dim")
-            detail.append(" ".join(n.text.split()), style="italic")
+            detail.append(" ".join(markdown.plain(n.text).split()), style="italic")
         detail_width = max(12, width - MARK)
         lines = list(detail.wrap(WRAP_CONSOLE, detail_width))
         if len(lines) > NotificationsScreen.COMMENT_LINES:
