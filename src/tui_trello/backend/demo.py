@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import mimetypes
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from tui_trello.models import (
     BoardSnapshot,
     Card,
     CardList,
+    CardPreview,
     CheckItem,
     Checklist,
     Comment,
@@ -277,7 +279,8 @@ class DemoBackend:
             return Attachment(attachment_id, name, link, is_upload=False, date=NOW)
         self._files[attachment_id] = content
         return Attachment(attachment_id, name, f"https://trello.example/1/cards/{card_id}/attachments/{attachment_id}"
-                          f"/download/{name}", is_upload=True, size=len(content), date=NOW, file_name=name)
+                          f"/download/{name}", is_upload=True, size=len(content), date=NOW, file_name=name,
+                          mime_type=mimetypes.guess_type(name)[0] or "")
 
     def _reaction(self, member_id: str, short_name: str) -> Reaction:
         native = next(native for name, native, _ in REACTIONS if name == short_name)
@@ -314,6 +317,13 @@ class DemoBackend:
             for card in snapshot.cards:
                 if card_id in (card.id, links.short_link(card.url, self.link_hosts)):
                     return card
+        raise BackendError(f"No card {card_id}")
+
+    async def card_preview(self, card_id: str) -> CardPreview:
+        for snapshot in self._boards.values():
+            for card in snapshot.cards:
+                if card_id in (card.id, links.short_link(card.url, self.link_hosts)):
+                    return CardPreview(card, snapshot.location(card), dict(snapshot.members))
         raise BackendError(f"No card {card_id}")
 
     async def board(self, board_id: str) -> Board:

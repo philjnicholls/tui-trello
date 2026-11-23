@@ -18,6 +18,7 @@ from tui_trello.models import (
     BoardSnapshot,
     Card,
     CardList,
+    CardPreview,
     CheckItem,
     Checklist,
     Comment,
@@ -103,6 +104,18 @@ class TrelloBackend:
         # One request: the nested list says whether it is archived, which the card itself doesn't.
         data = await self._request("GET", f"/cards/{card_id}", fields=CARD_FIELDS, list="true", list_fields="closed")
         return Card.from_api(data)
+
+    async def card_preview(self, card_id: str) -> CardPreview:
+        """A card, its list, board and members, for showing it without loading its board. Archived cards are
+        returned, marked."""
+        card = await self._request(
+            "GET", f"/cards/{card_id}", fields=CARD_FIELDS, list="true", list_fields="name,closed",
+            board="true", board_fields="name,closed", members="true", member_fields="fullName,username")
+        card_list, board, members = card["list"], card["board"], card["members"]
+        archived = next((what for what, data in (("card", card), ("list", card_list), ("board", board))
+                         if data.get("closed")), "")
+        return CardPreview(Card.from_api(card), f"{board['name']} › {card_list['name']}",
+                           {m["id"]: Member.from_api(m) for m in members}, archived)
 
     async def board(self, board_id: str) -> Board:
         return Board.from_api(await self._request("GET", f"/boards/{board_id}", fields="name,url,starred"))

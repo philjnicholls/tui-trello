@@ -138,6 +138,16 @@ class Card:
 
 
 @dataclass(frozen=True)
+class CardPreview:
+    """A card seen through a link, perhaps on a board that isn't loaded: enough to draw it, not to act on it."""
+
+    card: Card
+    location: str  # "Board › List"
+    members: dict[str, Member] = field(default_factory=dict)
+    archived: str = ""  # "card", "list" or "board": what is archived or closed; "" if none
+
+
+@dataclass(frozen=True)
 class Attachment:
     """A file uploaded to a card, or a link attached to it."""
 

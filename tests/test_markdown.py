@@ -97,9 +97,9 @@ def test_clickable_links_and_images() -> None:
     found = clicks(render("a [site](https://example.com) and ![pic.png](https://example.com/pic.png) https://b.example",
                           clickable=True))
     assert found == {
-        "site": ("app.follow_link", ("https://example.com",)),
-        "[image: pic.png]": ("app.follow_link", ("https://example.com/pic.png",)),
-        "https://b.example": ("app.follow_link", ("https://b.example",)),
+        "site": ("app.open_link", ("https://example.com",)),
+        "[image: pic.png]": ("app.open_link", ("https://example.com/pic.png",)),
+        "https://b.example": ("app.open_link", ("https://b.example",)),
     }
 
 
@@ -112,7 +112,7 @@ def test_links_are_not_clickable_by_default() -> None:
 def test_clickable_inline_and_in_blocks() -> None:
     text = inline("go to [it](https://example.com)", clickable=True)
     assert [span.style.meta["@click"] for span in text.spans if span.style.meta.get("@click")] == [
-        ("app.follow_link", ("https://example.com",))]
+        ("app.open_link", ("https://example.com",))]
     assert not [s for s in inline("go to [it](https://example.com)").spans if s.style.meta.get("@click")]
     assert clicks(render("> - [deep](https://example.com)\n\n| a |\n| - |\n| [cell](https://b.example) |",
                          clickable=True)).keys() == {"deep", "cell"}
@@ -120,4 +120,4 @@ def test_clickable_inline_and_in_blocks() -> None:
 
 def test_rtl_link_keeps_its_click() -> None:
     found = clicks(render("انظر [البطاقة](https://trello.com/c/abc) من فضلك", clickable=True))
-    assert found and set(found.values()) == {("app.follow_link", ("https://trello.com/c/abc",))}
+    assert found and set(found.values()) == {("app.open_link", ("https://trello.com/c/abc",))}

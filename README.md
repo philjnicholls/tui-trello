@@ -125,8 +125,9 @@ the terminal to copy it (OSC 52); most terminals do, but GNOME Terminal and othe
 Descriptions, comments and checklist items often link to other Trello things. `L` lists every link on the current
 card (in the browser, triage, my work or the card screen) in a picker: each has an icon (🗂 board, 🃏 card, 💬 comment,
 📎 attachment, 🔗 web page), a label, and a hint saying what it is and where it was found. Typing filters; enter follows
-the link, `ctrl+o` opens it in the web browser instead, `ctrl+y` copies it. A plain mouse click on a link, or on an
-`[image: ...]`, follows it the same way; `ctrl+click` still opens the browser directly in terminals that support it.
+the link, `ctrl+o` opens it in the web browser instead, `ctrl+y` copies it, and `alt+p` previews it (below). A plain
+mouse click on a link, or on an `[image: ...]`, does the same as `alt+p`; `ctrl+click` still opens the browser directly
+in terminals that support it.
 
 - A card link opens the card, loading its board first if it isn't open. A comment link also scrolls to the comment and
   marks it with a bar down its left side (only the newest 50 comments are loaded; for an older one, `o` opens the card
@@ -142,6 +143,13 @@ attachment link opens the attachments picker over the default board. It starts i
 says otherwise. A URL that isn't a Trello board, card, comment or attachment link is refused before the app starts. With
 `--demo` it takes the demo's `trello.example` links. Put the URL in single quotes: `#`, `?` and `&` mean things to the
 shell. `--open` can't be combined with `--board`, `login` or `logout`.
+
+A click on a card, comment or attachment link, or `alt+p` on it in the `L` list, opens a preview in a popup instead of
+going there: the whole card (description, attachments, checklists and comments, with a linked comment marked), or the
+attachment's name, size and type. The card needn't be on the open board, and nothing is loaded into the browser. `esc`
+closes the popup and you are back exactly where you were (from the `L` list, back in the list); `enter` follows the
+link, `ctrl+o` opens it in the web browser, `ctrl+y` copies it. A click on a link inside a preview opens a further
+preview. Board and web links have no preview: a click or `alt+p` goes to the board or the web page.
 
 ## Notifications
 
@@ -191,8 +199,10 @@ Vim-style throughout; `?` in the app shows the keys for the view you are in, and
 |                        | @mentioning its author                                                             |
 | `R`                    | react to a comment: pick the comment, then an emoji; picking yours takes it off    |
 | `y` `Y`                | copy the link to the card, to one of its comments                                  |
-| `L`                    | follow a link on the card (a click does too): Trello cards, comments, boards and   |
-|                        | attachments open here, the rest in the browser; `ctrl+o` opens one in the browser  |
+| `L`                    | follow a link on the card: Trello cards, comments, boards and attachments open     |
+|                        | here, the rest in the browser; `alt+p` in the list previews a card, comment or     |
+|                        | attachment in a popup (a click on a link does too); `ctrl+o` opens one in the      |
+|                        | browser                                                                            |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |
 | `p`                    | my work: toggle the preview                                                        |
 | `d` `D` `u`            | notifications: mark read, mark all read, show or hide read ones (remembered)       |

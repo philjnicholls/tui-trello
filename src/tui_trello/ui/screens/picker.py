@@ -590,11 +590,13 @@ class AttachmentPickerScreen(PickerScreen):
 
 class LinkPickerScreen(PickerScreen[str]):
     """The links in a card's text. Enter dismisses with the highlighted link's URL, for the caller to follow;
-    ctrl+o opens it in the web browser whatever it is, ctrl+y copies it."""
+    ctrl+o opens it in the web browser whatever it is, ctrl+y copies it, alt+p previews a card, comment or
+    attachment link in a popup (any other link is followed, as on enter)."""
 
-    HINT = "enter: follow · ctrl+o: open in the browser · ctrl+y: copy link"
+    HINT = "enter: follow · alt+p: preview · ctrl+o: open in the browser · ctrl+y: copy link"
 
     BINDINGS = [
+        Binding("alt+p", "preview", "Preview", show=False),
         Binding("ctrl+o", "open_in_browser", "Open in the browser", show=False),
         Binding("ctrl+y", "copy_link", "Copy link", show=False),
     ]
@@ -611,6 +613,22 @@ class LinkPickerScreen(PickerScreen[str]):
     def highlighted(self) -> str | None:
         highlighted = self.query_one(OptionList).highlighted
         return self.shown[highlighted].value if highlighted is not None and highlighted < len(self.shown) else None
+
+    @work
+    async def action_preview(self) -> None:
+        """Preview the highlighted link on top of this list. Esc there comes back here as it was; enter follows the
+        link, ctrl+o opens it in the browser (this list closes either way). A link with no preview is followed."""
+        # Imported here: preview imports follow, which imports this module.
+        from tui_trello.ui.screens.preview import previewable
+
+        highlighted = self.query_one(OptionList).highlighted
+        if highlighted is None or highlighted >= len(self.shown):
+            return
+        choice = self.shown[highlighted]
+        if not previewable(choice.value, self.app.store.link_hosts):
+            self.dismiss(choice.value)
+        elif (result := await self.app.preview_link(choice.value, choice.hint)) is not None:
+            self.dismiss(result or None)  # "" if it went to the web browser
 
     def action_open_in_browser(self) -> None:
         from tui_trello.ui import follow

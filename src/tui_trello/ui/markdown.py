@@ -7,7 +7,7 @@ styling. List markers and quote bars hang outside the text, and sit on the right
 Supported: paragraphs and line breaks, **bold**, *italic*, ~~strikethrough~~, `code`, links (and bare URLs), @mentions,
 headings, bullet and numbered lists (nested), block quotes, code blocks, rules, tables and images (shown by name).
 `inline()` renders just the inline part, for one-line text such as checklist items. With `clickable`, links and
-images carry a click action, `app.follow_link(url)`, so a click on them is handled by the app.
+images carry a click action, `app.open_link(url)`, so a click on them is handled by the app.
 `links()` lists the links and images of a text, in order.
 """
 
@@ -51,7 +51,7 @@ class Link:
 
 def render(source: str, *, clickable: bool = False) -> RenderableType:
     """The renderable for a Markdown description or comment. With `clickable`, a click on a link or image runs the
-    app's `follow_link` action."""
+    app's `open_link` action."""
     root = SyntaxTreeNode(PARSER.parse(source))
     return Group(*_spaced(_blocks(root.children, depth=0, clickable=clickable)))
 
@@ -184,8 +184,8 @@ def _inline(node: SyntaxTreeNode, style: Style = Style(), clickable: bool = Fals
 
 
 def _click(href: object) -> Style:
-    """The style that makes text run `App.action_follow_link(href)` when clicked."""
-    return Style(meta={"@click": ("app.follow_link", (str(href),))}) if href else Style()
+    """The style that makes text run `App.action_open_link(href)` when clicked."""
+    return Style(meta={"@click": ("app.open_link", (str(href),))}) if href else Style()
 
 
 def _append_mentions(text: Text, content: str, style: Style) -> None:

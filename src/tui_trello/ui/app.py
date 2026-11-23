@@ -18,14 +18,17 @@ Motions apply to whatever has focus, so every list, table and scrolling pane mov
 from __future__ import annotations
 
 import asyncio
+import time
 
 from rich.text import Text
 from textual import events, work
 from textual.app import App
 from textual.binding import Binding
 from textual.signal import Signal
+from textual.widget import Widget
 from textual.widgets import Input, TextArea
 
+from tui_trello import links
 from tui_trello.backend import Backend, BackendError
 from tui_trello.config import Settings
 from tui_trello.drafts import Drafts
@@ -40,6 +43,7 @@ from tui_trello.ui.screens.keys import KeysScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
 from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import Choice, PickerScreen
+from tui_trello.ui.screens.preview import LinkPreviewScreen, previewable
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.widgets.card_view import CardView
 
@@ -63,9 +67,13 @@ CHORDS = {
 }
 CHORD_PREFIXES = {chord[0] for chord in CHORDS}
 
+# Actions that change the screens under a link preview, so are off while one is up.
+PREVIEW_BLOCKED = {"switch_mode", "cycle_mode", "pick_board", "refresh", "command_palette"}
+
 
 class TrelloApp(App):
     TITLE = "Trello"
+    CLICK_SECONDS = 0.5  # the longest between a mouse press, which moves the focus, and its click
 
     # With `[ui] transparent` (the default) the app runs in Textual's ANSI mode, where the screen is drawn on the
     # terminal's own background, transparency included. Panels, table stripes and scrollbar tracks would still paint
@@ -126,8 +134,12 @@ class TrelloApp(App):
         self.done_check_items_toggled: Signal[bool] = Signal(self, "done_check_items_toggled")
         self.store = Store(self, backend, drafts)
         self.pending_chord = ""
+        self.blurred: tuple[Widget, float] | None = None  # the widget that last lost the focus, and when
         self.following = ""  # the link being followed, if any
         self.open_url = open_url  # `--open`: a Trello link to follow at start-up, in place of the default board
+        # The links whose preview is being pushed or is open, as (kind, short link, comment, card, attachment)
+        self.previewing: set[tuple] = set()
+        self.root_preview = False  # a preview not opened from inside another is being pushed or is open
 
     async def on_mount(self) -> None:
         await self.switch_mode(self.settings.layout)
@@ -179,6 +191,15 @@ class TrelloApp(App):
                 return
         await super().on_event(event)
 
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        self.blurred = (event.widget, time.monotonic())
+
+    def clicked_from(self) -> Widget | None:
+        """The widget the click that is being handled took the focus from: the one that lost it a moment ago."""
+        if self.blurred and time.monotonic() - self.blurred[1] < self.CLICK_SECONDS:
+            return self.blurred[0]
+        return None
+
     def action_motion(self, motion: str) -> None:
         if (target := self.focused) is None:
             return
@@ -192,6 +213,8 @@ class TrelloApp(App):
         await self.switch_mode(modes[(modes.index(self.current_mode) + step) % len(modes)])
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action in PREVIEW_BLOCKED and any(isinstance(screen, LinkPreviewScreen) for screen in self.screen_stack):
+            return False  # they'd change what is under the popup, which closing it must leave as it was
         if action == "toggle_done_check_items":
             return bool(self.screen.query(CardView))  # only where a card pane is
         return True
@@ -251,6 +274,44 @@ class TrelloApp(App):
 
     def open_card(self, card_id: str, comment_id: str = "") -> None:
         self.push_screen(CardScreen(card_id, comment_id))
+
+    def action_open_link(self, url: str) -> None:
+        """A click on a link or image in a card's text: a card, comment or attachment link opens its preview; a
+        board or web link is followed. Inside a preview, the preview deals with it."""
+        if isinstance(self.screen, LinkPreviewScreen):
+            self.screen.open_link(url)
+        else:
+            self.open_link(url, self.clicked_from())
+
+    async def preview_link(self, url: str, where: str = "", nested: bool = False) -> str | None:
+        """Push the popup for `url` and wait for it: the URL to follow, "" if it went to the web browser, None if it
+        was closed. Dropped (None): the same link again while its preview is being pushed or is open, such as a double
+        click (whatever the form of its URL), and a second preview from outside a preview while one is being pushed or
+        is open. A preview from inside a preview (`nested`) is allowed."""
+        link = links.parse(url, self.store.link_hosts)
+        key = (link.kind, link.short_link, link.comment_id, link.card_id, link.attachment_id)
+        if key in self.previewing or (self.root_preview and not nested):
+            return None
+        self.previewing.add(key)
+        self.root_preview = self.root_preview or not nested
+        try:
+            return await self.push_screen_wait(LinkPreviewScreen(url, where))
+        finally:
+            self.previewing.discard(key)
+            if not nested:
+                self.root_preview = False
+
+    @work
+    async def open_link(self, url: str, refocus: Widget | None = None) -> None:
+        """`refocus` had the focus before the click that opened the link, which moved it: it gets it back when the
+        preview is closed."""
+        if previewable(url, self.store.link_hosts):
+            if (result := await self.preview_link(url)):
+                self.action_follow_link(result)
+            elif refocus is not None and refocus.is_attached and refocus.screen is self.screen:
+                self.screen.set_focus(refocus)
+        else:
+            self.action_follow_link(url)
 
     @work
     async def action_follow_link(self, url: str) -> None:

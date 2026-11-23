@@ -265,3 +265,51 @@ async def test_unknown_short_link_is_an_error() -> None:
         await make_backend([], status=404).card("nope")
     with pytest.raises(BackendError, match="404"):
         await make_backend([], status=404).board("nope")
+
+
+def preview_payloads(card_closed=False, list_closed=False, board_closed=False) -> dict:
+    return {
+        "/1/cards/Xy12Zw34": {
+            "id": "c9", "name": "Linked", "idList": "l1", "idBoard": "b1", "closed": card_closed,
+            "list": {"id": "l1", "name": "To do", "closed": list_closed},
+            "board": {"id": "b1", "name": "Roadmap", "closed": board_closed},
+            "members": [{"id": "m1", "fullName": "Ada Lovelace", "username": "ada"}],
+        },
+    }
+
+
+async def test_card_preview() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    PAYLOADS.update(preview_payloads())
+    try:
+        preview = await backend.card_preview("Xy12Zw34")
+    finally:
+        for path in preview_payloads():
+            del PAYLOADS[path]
+    assert preview.card.id == "c9" and preview.location == "Roadmap › To do" and preview.archived == ""
+    assert preview.members["m1"].full_name == "Ada Lovelace"
+    assert [(r.method, r.url.path) for r in requests] == [("GET", "/1/cards/Xy12Zw34")]  # one request
+    params = requests[0].url.params
+    assert params["fields"] == CARD_FIELDS
+    assert params["list"] == "true" and params["list_fields"] == "name,closed"
+    assert params["board"] == "true" and params["board_fields"] == "name,closed"
+    assert params["members"] == "true" and params["member_fields"] == "fullName,username"
+
+
+@pytest.mark.parametrize(("flags", "archived"), [
+    ({"card_closed": True}, "card"), ({"list_closed": True}, "list"), ({"board_closed": True}, "board"),
+    ({"card_closed": True, "board_closed": True}, "card")])
+async def test_card_preview_archived(flags: dict, archived: str) -> None:
+    backend = make_backend([])
+    PAYLOADS.update(preview_payloads(**flags))
+    try:
+        assert (await backend.card_preview("Xy12Zw34")).archived == archived
+    finally:
+        for path in preview_payloads():
+            del PAYLOADS[path]
+
+
+async def test_card_preview_404() -> None:
+    with pytest.raises(BackendError, match="404"):
+        await make_backend([], status=404).card_preview("nope")

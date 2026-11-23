@@ -48,8 +48,11 @@ class CardView(VerticalScroll):
     CardView.empty #card-tip { display: block; }
     """
 
+    KEY_HINTS = True  # name the keys that act on the card (x, a, c, e) in its hints; a read-only view names none
     TIP_SECONDS = 15
     REACTORS_SHOWN = 3  # names under a comment's emoji; more than this shows a count
+    MISSING_COMMENT = ("That comment isn't on the card any more, or is older than the 50 shown; o opens the card on "
+                       "trello.com")
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id, classes="empty")
@@ -150,9 +153,11 @@ class CardView(VerticalScroll):
             meta.append_text(Text.assemble(("👤 ", "dim"), Text(", ", style="cyan").join(
                 visual(Text(name, style="cyan")) for name in names), "\n"))
         meta.append_text(render.label_chips(card.labels))
-        drafts = {"comment": "c: unsent comment", "desc": "e: unsaved description"}
+        drafts = {"comment": ("c: ", "unsent comment"), "desc": ("e: ", "unsaved description")}
         for kind in self.app.store.drafts.kinds(card.id):
-            meta.append_text(Text.assemble("\n", ("✐ draft", "bold yellow"), (f"  {drafts[kind]}", "yellow")))
+            key, what = drafts[kind]
+            meta.append_text(Text.assemble("\n", ("✐ draft", "bold yellow"),
+                                           (f"  {key if self.KEY_HINTS else ''}{what}", "yellow")))
         self.query_one("#card-meta", Static).update(meta)
 
     def show_description(self, desc: str) -> None:
@@ -174,11 +179,13 @@ class CardView(VerticalScroll):
             if not shown and checklist.done:
                 parts.append(Text(f"{checklist.done} done hidden", style="dim italic"))
             parts.append(Text(""))
-        if not any(checklist.done for checklist in checklists):
-            hint = "x: tick or add"
-        else:
-            hint = f"X: {'hide' if shown else 'show'} done items   x: tick or add"
-        parts[-1:] = [Text(hint, style="dim")] if checklists else []
+        hints = []
+        if any(checklist.done for checklist in checklists):
+            hints.append(f"X: {'hide' if shown else 'show'} done items")
+        if self.KEY_HINTS:
+            hints.append("x: tick or add")
+        hint = "   ".join(hints)
+        parts[-1:] = [Text(hint, style="dim")] if checklists and hint else []
         self.query_one("#card-checklists", Static).update(Group(*parts))
 
     @staticmethod
@@ -196,7 +203,7 @@ class CardView(VerticalScroll):
         self.query(".attachments").set_class(bool(attachments), "visible")
         rows = [Text.assemble(attachment_marker(a), visual(a.name), ("  " + attachment_hint(a), "dim"))
                 for a in attachments]
-        if rows:
+        if rows and self.KEY_HINTS:
             rows.append(Text("a: open, save or add", style="dim"))
         self.query_one("#card-attachments", Static).update(Group(*rows))
 
@@ -301,6 +308,9 @@ class CardView(VerticalScroll):
         if self.comments_shown:
             self.mark_target()
 
+    def say_comment_missing(self) -> None:
+        self.app.notify(self.MISSING_COMMENT, severity="warning")
+
     def mark_target(self) -> None:
         """Put the mark on the target comment and, the first time, scroll to it; say so if it isn't there."""
         for widget in self.query(".comment.target"):
@@ -315,8 +325,7 @@ class CardView(VerticalScroll):
             return
         self.scroll_pending = False
         if widget is None:
-            self.app.notify("That comment isn't on the card any more, or is older than the 50 shown; o opens the "
-                            "card on trello.com", severity="warning")
+            self.say_comment_missing()
         else:
             self.call_after_refresh(self.scroll_to_widget, widget, top=True, animate=False)
 

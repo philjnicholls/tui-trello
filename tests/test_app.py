@@ -17,6 +17,7 @@ from tui_trello.ui import clipboard, render
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
+from tui_trello.ui.screens.keys import KeysScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
 from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import (
@@ -28,6 +29,7 @@ from tui_trello.ui.screens.picker import (
     PickerScreen,
     TextPromptScreen,
 )
+from tui_trello.ui.screens.preview import LinkPreviewScreen
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.tips import TIPS
 from tui_trello.ui.widgets.card_view import CardView
@@ -2054,3 +2056,538 @@ async def test_closing_an_open_attachment_picker_without_a_default_board_shows_t
         await asyncio.sleep(0.4)
         await settle(pilot, 5)
         assert isinstance(app.screen, PickerScreen) and not isinstance(app.screen, AttachmentPickerScreen)
+
+
+# -- link previews ------------------------------------------------------------------------------------------------
+
+
+def preview_screens(app) -> list[LinkPreviewScreen]:
+    return [s for s in app.screen_stack if isinstance(s, LinkPreviewScreen)]
+
+
+def preview_text(app) -> str:
+    return "\n".join(screen_lines(app))
+
+
+async def test_preview_card_link_from_picker(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"move", "alt+p")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        text = preview_text(app)
+        assert "Move cards between lists" in text and "Product roadmap › Doing" in text
+        assert "card · description" in text  # where the link was found
+        await pilot.press("escape")
+        await settle(pilot)
+        assert isinstance(app.screen, LinkPickerScreen)
+        assert app.screen.query_one("Input").value == "move"
+        await pilot.press("escape")
+        await settle(pilot)
+        assert isinstance(app.screen, BrowserScreen)
+        assert app.screen.current_card().name == "Offline cache for boards"
+
+
+async def test_preview_keeps_the_board(app, backend) -> None:
+    arabic = card_named(backend, "إصلاح خطأ في نموذج التسجيل (عاجل)")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(arabic.url)
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        assert "(لجاع)" in preview_text(app)  # drawn right to left
+        assert app.store.snapshot.board.id == "b-product"
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.store.snapshot.board.id == "b-product" and isinstance(app.screen, BrowserScreen)
+        assert not app.store.busy
+
+
+async def test_preview_comment_link(app, backend) -> None:
+    split = card_named(backend, "Split backend from UI")
+    grace = next(c for c in await backend.comments(split.id) if c.author == "Grace Hopper")
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.action_open_link(split.comment_url(grace.id))
+        await settle(pilot, 10)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        view = app.screen.query_one(CardView)
+        widget = view.query_one(f"#comment-{grace.id}")
+        assert widget.has_class("target") and view.region.contains_region(widget.region)
+        assert not card_screens(app)
+
+
+async def test_preview_missing_comment(app, backend) -> None:
+    split = card_named(backend, "Split backend from UI")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(split.comment_url("made-up"))
+        await settle(pilot, 10)
+        assert "Split backend from UI" in preview_text(app)
+        assert "ctrl+o opens it on trello.com" in str(app.screen.query_one("#preview-note").content)
+        assert not app.screen.query(".comment.target")
+
+
+async def test_preview_attachment_link(app, backend, tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("remember")
+    moving = card_named(backend, "Move cards between lists")
+    notes = await backend.attach_file(moving.id, tmp_path / "notes.txt")
+    sketch = (await backend.attachments(moving.id))[0]
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(sketch.url)
+        await settle(pilot, 8)
+        text = preview_text(app)
+        assert "picker-sketch.png" in text and "On card" in text and "Move cards between lists" in text
+        assert "Product roadmap › Doing" in text and "image/png" in text
+        await pilot.press("escape")
+        app.action_open_link(notes.url.replace(notes.id, "gone"))
+        await settle(pilot, 8)
+        assert "That attachment is no longer on its card" in preview_text(app)
+
+
+async def test_board_and_web_links_have_no_preview(app, backend, monkeypatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"textual", "alt+p")
+        await settle(pilot)
+        assert opened == ["https://textual.textualize.io/"] and not preview_screens(app)
+        assert isinstance(app.screen, BrowserScreen)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"home", "alt+p")
+        await settle(pilot, 8)
+        assert app.store.snapshot.board.id == "b-home" and not preview_screens(app)
+        app.action_open_link("https://example.com/")
+        await settle(pilot)
+        assert opened[-1] == "https://example.com/" and not preview_screens(app)
+
+
+async def test_preview_enter_follows(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"move", "alt+p")
+        await settle(pilot, 8)
+        await pilot.press("enter")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, CardScreen) and app.screen.card_id == card_named(app.store.backend,
+                                                                                    "Move cards between lists").id
+        assert not preview_screens(app) and not [s for s in app.screen_stack if isinstance(s, LinkPickerScreen)]
+
+
+async def test_preview_ctrl_o(app, backend, monkeypatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"move", "alt+p")
+        await settle(pilot, 8)
+        await pilot.press("ctrl+o")
+        await settle(pilot)
+        assert opened == [card_named(backend, "Move cards between lists").url]
+        assert isinstance(app.screen, BrowserScreen) and not preview_screens(app)
+
+
+async def test_preview_copies_the_link(app, backend, monkeypatch) -> None:
+    monkeypatch.setattr(clipboard, "command", lambda: None)
+    moving = card_named(backend, "Move cards between lists")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        await pilot.press("ctrl+y")
+        assert app.clipboard == moving.url and isinstance(app.screen, LinkPreviewScreen)
+
+
+async def test_preview_error_in_popup(app, monkeypatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link("https://trello.example/c/nope")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen) and "No card nope" in preview_text(app)
+        assert not app._notifications
+        await pilot.press("ctrl+o")
+        await settle(pilot)
+        assert opened == ["https://trello.example/c/nope"] and not preview_screens(app)
+
+
+class ArchivedCards(DemoBackend):
+    async def card_preview(self, card_id: str):
+        return replace(await super().card_preview(card_id), archived="list")
+
+
+async def test_preview_says_what_is_archived() -> None:
+    backend = ArchivedCards()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    arabic = card_named(backend, "إصلاح خطأ في نموذج التسجيل (عاجل)")  # on a board that isn't loaded
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(arabic.url)
+        await settle(pilot, 8)
+        assert "In an archived list" in preview_text(app)
+
+
+async def test_click_on_a_card_link_previews_it(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        lines = screen_lines(app)
+        y = next(i for i, line in enumerate(lines) if "the card Move cards" in line)
+        await pilot.click(offset=(lines[y].index("Move cards") + 1, y))
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen) and not card_screens(app)
+        assert app.store.snapshot.board.id == "b-product"
+        await pilot.press("enter")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, CardScreen) and not preview_screens(app)
+
+
+async def test_preview_leaves_scroll_and_focus(app, backend) -> None:
+    split = card_named(backend, "Split backend from UI")
+    moving = card_named(backend, "Move cards between lists")
+    async with app.run_test(size=(120, 14)) as pilot:
+        await pilot.pause()
+        app.open_card(split.id)
+        await settle(pilot, 8)
+        view = app.screen.query_one(CardView)
+        view.scroll_to(y=view.max_scroll_y, animate=False)
+        await settle(pilot)
+        before, focused, stack = view.scroll_y, app.focused, list(app.screen_stack)
+        assert before > 0
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert view.scroll_y == before and app.focused is focused and app.screen_stack == stack
+
+
+async def test_preview_close_cancels_loading(backend) -> None:
+    gate = asyncio.Event()
+
+    class Waiting(DemoBackend):
+        async def card_preview(self, card_id: str):
+            await gate.wait()
+            return await super().card_preview(card_id)
+
+    waiting = Waiting()
+    app = TrelloApp(waiting, Settings(default_board="b-product"))
+    moving = card_named(waiting, "Move cards between lists")
+    other = card_named(waiting, "Split backend from UI")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.store.snapshot.cards = [c for c in app.store.snapshot.cards if c.id != moving.id]  # not loaded
+        app.action_open_link(moving.url)
+        await settle(pilot, 4)
+        assert "Loading…" in preview_text(app) and app.store.is_busy("preview")
+        await pilot.press("escape")
+        await settle(pilot, 4)
+        assert not app.store.busy and not app._notifications and isinstance(app.screen, BrowserScreen)
+        gate.set()
+        await settle(pilot)
+        assert other  # the demo is untouched
+
+
+async def test_mode_keys_disabled_in_preview(app, backend) -> None:
+    moving = card_named(backend, "Move cards between lists")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        await pilot.press("2", "b", "r", "g", "t")
+        await settle(pilot)
+        assert isinstance(app.screen, LinkPreviewScreen) and app.current_mode == "browser"
+        assert len(app.screen_stack) == 2  # the browser and the popup
+        await pilot.press("escape")
+        assert isinstance(app.screen, BrowserScreen)
+
+
+async def test_click_inside_preview_previews(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("enter")  # the card screen of the links card
+        await settle(pilot, 8)
+        app.action_open_link(card_named(backend, "Offline cache for boards").url)
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 1
+        lines = screen_lines(app)
+        y = next(i for i, line in enumerate(lines) if "the card Move cards" in line)
+        await pilot.click(offset=(lines[y].index("Move cards") + 1, y))
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 2
+        assert "Product roadmap › Doing" in preview_text(app)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert len(preview_screens(app)) == 1 and "Offline cache for boards" in preview_text(app)
+        # Following from a second preview closes both.
+        app.screen.open_link(card_named(backend, "Move cards between lists").url)
+        await settle(pilot, 8)
+        await pilot.press("enter")
+        await settle(pilot, 8)
+        assert not preview_screens(app) and app.screen.card_id == card_named(backend, "Move cards between lists").id
+
+
+async def test_help_lists_preview(app) -> None:
+    async with app.run_test(size=(120, 100)) as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert "preview" in preview_text(app)
+
+
+async def test_preview_scrolls_with_vim_keys(app, backend) -> None:
+    split = card_named(backend, "Split backend from UI")
+    async with app.run_test(size=(120, 14)) as pilot:
+        await pilot.pause()
+        app.action_open_link(split.url)
+        await settle(pilot, 10)
+        view = app.screen.query_one(CardView)
+        assert view.max_scroll_y > 0 and view.scroll_y == 0
+        await pilot.press("j", "j")
+        await settle(pilot)
+        assert view.scroll_y > 0
+        await pilot.press("k", "k")
+        await settle(pilot)
+        assert view.scroll_y == 0
+        await pilot.press("G")
+        await settle(pilot, 8)
+        assert view.scroll_y == view.max_scroll_y
+        await pilot.press("g", "g")
+        await settle(pilot, 8)
+        assert view.scroll_y == 0
+        await pilot.press("ctrl+d")
+        await settle(pilot, 8)
+        assert view.scroll_y > 0
+        await pilot.press("ctrl+u")
+        await settle(pilot, 8)
+        assert view.scroll_y == 0
+        assert isinstance(app.screen, LinkPreviewScreen)
+
+
+async def test_help_lists_picker_keys_in_views_but_not_in_a_preview(app, backend) -> None:
+    async with app.run_test(size=(120, 100)) as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await settle(pilot)
+        assert "ctrl+j ctrl+k" in preview_text(app)
+        await pilot.press("escape")
+        await settle(pilot)
+        app.action_open_link(card_named(backend, "Move cards between lists").url)
+        await settle(pilot, 8)
+        app.action_toggle_help()
+        await settle(pilot)
+        assert "Keys in a link preview" in preview_text(app) and "ctrl+j ctrl+k" not in preview_text(app)
+
+
+async def test_click_preview_returns_focus(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        lines = screen_lines(app)
+        before = app.focused
+        y = next(i for i, line in enumerate(lines) if "the card Move cards" in line)
+        await pilot.click(offset=(lines[y].index("Move cards") + 1, y))
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.focused is before
+
+
+async def test_help_in_a_preview_shows_the_preview_keys(app, backend) -> None:
+    async with app.run_test(size=(120, 100)) as pilot:
+        await pilot.pause()
+        app.action_open_link(card_named(backend, "Move cards between lists").url)
+        await settle(pilot, 8)
+        app.action_toggle_help()
+        await settle(pilot)
+        text = preview_text(app)
+        assert "Keys in a link preview" in text and "follow the link" in text
+        assert "command palette" not in text and "new card" not in text
+
+
+async def test_double_click_pushes_one_preview(app, backend) -> None:
+    moving = card_named(backend, "Move cards between lists")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(moving.url)
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 1
+        app.action_open_link(moving.url)  # the same link inside its own preview is no further preview either
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 1
+        await pilot.press("escape")
+        await settle(pilot)
+        assert not preview_screens(app)
+        app.action_open_link(moving.url)  # once closed it opens again
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 1
+
+
+async def test_double_click_in_a_preview_pushes_one_more(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(card_named(backend, "Offline cache for boards").url)
+        await settle(pilot, 8)
+        further = card_named(backend, "Move cards between lists").url
+        app.action_open_link(further)
+        app.action_open_link(further)
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 2
+
+
+async def test_picker_preview_key_twice_pushes_one_preview(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"move")
+        picker = app.screen
+        picker.action_preview()
+        picker.action_preview()
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 1
+
+
+async def test_command_palette_disabled_in_preview(app, backend) -> None:
+    moving = card_named(backend, "Move cards between lists")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        await pilot.press("ctrl+p")
+        await app.run_action("command_palette")  # `:`, were the popup not modal to keys
+        await settle(pilot)
+        assert [type(s).__name__ for s in app.screen_stack] == ["BrowserScreen", "LinkPreviewScreen"]
+        # Still blocked under the key reference opened over the preview.
+        app.action_toggle_help()
+        await settle(pilot)
+        assert [type(s).__name__ for s in app.screen_stack][-2:] == ["LinkPreviewScreen", "KeysScreen"]
+        await pilot.press("ctrl+p")
+        await app.run_action("command_palette")
+        await app.run_action("refresh")
+        await app.run_action("switch_mode('triage')")
+        await settle(pilot)
+        assert [type(s).__name__ for s in app.screen_stack][-2:] == ["LinkPreviewScreen", "KeysScreen"]
+        assert app.current_mode == "browser"
+
+
+async def test_preview_shows_only_keys_it_has(app, backend) -> None:
+    palette = card_named(backend, "Command palette: jump to any card")  # a ticked checklist item
+    moving = card_named(backend, "Move cards between lists")  # attachments
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        for card in (palette, moving):
+            app.store.drafts.set("comment", card.id, "half a thought")
+            app.store.drafts.set("desc", card.id, "half a description")
+        app.action_open_link(palette.url)
+        await settle(pilot, 8)
+        text = preview_text(app)
+        assert "☑" in text and "X: show done items" in text  # X works in the popup
+        assert "x: tick" not in text
+        assert "✐ draft  unsent comment" in text and "c: unsent" not in text  # the marker stays, the key goes
+        await pilot.press("escape")
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        text = preview_text(app)
+        assert "picker-sketch.png" in text and "a: open, save or add" not in text
+
+
+async def test_question_mark_in_a_preview_opens_its_help(app, backend) -> None:
+    async with app.run_test(size=(120, 100)) as pilot:
+        await pilot.pause()
+        app.action_open_link(card_named(backend, "Move cards between lists").url)
+        await settle(pilot, 8)
+        await pilot.press("question_mark")
+        await settle(pilot)
+        assert isinstance(app.screen, KeysScreen)
+        text = preview_text(app)
+        assert "Keys in a link preview" in text and "follow the link" in text
+        assert "ticked" in text  # X
+        assert "quit" not in text and "filter" not in text and "command palette" not in text
+        await pilot.press("question_mark")
+        await settle(pilot)
+        assert isinstance(app.screen, LinkPreviewScreen)
+
+
+async def test_x_in_a_preview_toggles_done_items(app, backend) -> None:
+    palette = card_named(backend, "Command palette: jump to any card")
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        app.action_open_link(palette.url)
+        await settle(pilot, 8)
+        assert "X: show done items" in preview_text(app)
+        await pilot.press("X")
+        await settle(pilot)
+        assert "X: hide done items" in preview_text(app)
+
+
+async def test_two_different_links_quickly_give_one_preview(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(card_named(backend, "Move cards between lists").url)
+        app.action_open_link(card_named(backend, "Offline cache for boards").url)
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 1
+        assert "Move cards between lists" in preview_text(app)
+        app.action_open_link(card_named(backend, "Offline cache for boards").url)  # inside it: a nested one
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 2
+
+
+async def test_two_forms_of_one_link_give_one_preview(app, backend) -> None:
+    moving = card_named(backend, "Move cards between lists")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        app.action_open_link(moving.url + "/extra-slug")  # nested, but the same card
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 1
+
+
+async def test_follow_from_a_nested_preview_closes_the_stack(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.action_open_link(card_named(backend, "Offline cache for boards").url)
+        await settle(pilot, 8)
+        app.action_open_link(card_named(backend, "Move cards between lists").url)
+        await settle(pilot, 8)
+        assert len(preview_screens(app)) == 2
+        await pilot.press("enter")
+        await settle(pilot, 12)
+        assert not preview_screens(app)
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("escape")
+        await settle(pilot)
+        await pilot.press("2")
+        await settle(pilot)
+        assert app.current_mode == "triage"
+        await pilot.press("4")
+        await settle(pilot)
+        assert app.current_mode == "notifications"
+        await pilot.press("colon")
+        await settle(pilot)
+        assert type(app.screen).__name__ != "NotificationsScreen"
+
+
+async def test_preview_shows_the_draft_marker_without_keys(app, backend) -> None:
+    moving = card_named(backend, "Move cards between lists")
+    async with app.run_test(size=(120, 60)) as pilot:
+        await pilot.pause()
+        app.store.drafts.set("comment", moving.id, "half a thought")
+        app.action_open_link(moving.url)
+        await settle(pilot, 8)
+        text = preview_text(app)
+        assert "draft" in text and "unsent comment" in text and "c: unsent" not in text

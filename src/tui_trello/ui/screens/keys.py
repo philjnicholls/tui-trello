@@ -14,7 +14,7 @@ from textual.widgets import Static
 LISTS = {"browser", "triage", "mywork"}
 CARDS = LISTS | {"card"}
 PLACE_NAMES = {"browser": "the browser", "triage": "triage", "mywork": "my work", "notifications": "notifications",
-               "card": "a card"}
+               "card": "a card", "preview": "a link preview"}
 
 # (section, where, keys); a key is (keys, what they do) or (keys, what they do, where).
 KEYS = [
@@ -26,7 +26,7 @@ KEYS = [
         ("gg G", "first, last"),
         ("ctrl+d ctrl+u", "half a page down, up"),
     ]),
-    ("Views", None, [
+    ("Views", CARDS | {"notifications"}, [  # off under a link preview
         ("1 2 3 4", "browser, triage, my work, notifications"),
         ("gt gT", "next, previous view"),
         ("b", "pick a board"),
@@ -56,8 +56,10 @@ KEYS = [
         ("y Y", "copy the link to the card, to one of its comments"),
         ("o", "open in the web browser"),
         ("L", ("follow a link on the card: Trello cards, comments, boards and attachments open here, the rest in the "
-               "web browser; ctrl+o in the list opens one in the browser, ctrl+y copies it. A click on a link does "
-               "the same")),
+               "web browser; alt+p in the list previews a card, comment or attachment in a popup (esc comes back), "
+               "ctrl+o opens one in the browser, ctrl+y copies it")),
+        ("click", "on a link: a card, comment or attachment opens its preview; enter there follows it; a board or "
+                  "web link is followed", CARDS),
         ("y o", "on the lists column, copy or open the board's link (a list has no link of its own)", {"browser"}),
         ("B", "copy the link to the board", {"browser", "triage"}),
     ]),
@@ -68,12 +70,19 @@ KEYS = [
         ("u", "hide / show the ones you've read (hidden at first; remembered)"),
         ("C", "reply to the comment: it starts with a quote of it and @mentions its author"),
     ]),
-    ("Pickers", None, [
+    ("Link preview", {"preview"}, [
+        ("esc q", "close it: everything under it is as it was"),
+        ("enter", "follow the link"),
+        ("ctrl+o ctrl+y", "open the link in the web browser, copy it"),
+        ("X", "show or hide the ticked items of every checklist"),
+        ("j k", "scroll; a click on a link in it previews that on top"),
+    ]),
+    ("Pickers", CARDS | {"notifications"}, [  # where pickers open; none do under a link preview
         ("type", "filter"),
         ("ctrl+j ctrl+k", "down, up"),
         ("enter esc", "choose, cancel"),
     ]),
-    ("", None, [("?", "close this"), ("q", "quit (back, on a card)")]),
+    ("", None, [("?", "close this"), ("q", "quit (back, on a card)", CARDS | {"notifications"})]),
 ]
 
 

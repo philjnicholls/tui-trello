@@ -14,6 +14,7 @@ from tui_trello.models import (
     Board,
     BoardSnapshot,
     Card,
+    CardPreview,
     CheckItem,
     Checklist,
     Comment,
@@ -44,6 +45,8 @@ class Backend(Protocol):
     async def card(self, card_id: str) -> Card: ...  # an id or a short link
 
     async def board(self, board_id: str) -> Board: ...  # likewise
+
+    async def card_preview(self, card_id: str) -> CardPreview: ...  # likewise; archived cards too
 
     async def my_work(self) -> WorkSnapshot: ...
 

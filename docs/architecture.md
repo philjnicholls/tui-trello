@@ -46,6 +46,7 @@ src/tui_trello/
       mywork.py       my cards on every board, grouped by due date, with preview
       notifications.py  Trello's notifications; enter opens the card, d / D mark read, u hides read ones, C replies
       card.py         full-screen card
+      preview.py      LinkPreviewScreen: what a card, comment or attachment link points to, in a popup
       keys.py         the ? key reference: the keys for the screen's HELP_PLACE, a for all
       picker.py       PickerScreen (fuzzy choose one), its label, checklist, attachment, link and file
                       variants, and TextPromptScreen (ctrl+o attaches a file)

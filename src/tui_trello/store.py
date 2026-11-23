@@ -27,6 +27,7 @@ from tui_trello.models import (
     Card,
     CardContext,
     CardList,
+    CardPreview,
     CheckItem,
     Checklist,
     Comment,
@@ -211,6 +212,15 @@ class Store:
             return card
         async with self._busy("card"):
             return await self.backend.card(short_link)
+
+    async def card_preview(self, short_link: str) -> CardPreview:
+        """A card to show in a link's preview: from a loaded snapshot if one has it, else asked of the backend. What
+        comes from the backend is not cached (asking again asks again), and no signal is fired, so no screen redraws.
+        A loaded snapshot never holds archived cards, so an archived one always comes from the backend, marked."""
+        if (card := self.known_card(short_link)) and (context := self.context_for(card.id)):
+            return CardPreview(card, context.location(card), context.members)
+        async with self._busy("preview"):
+            return await self.backend.card_preview(short_link)
 
     async def board_by_link(self, short_link: str) -> Board:
         if board := self.known_board(short_link):
