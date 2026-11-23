@@ -11,9 +11,13 @@ Motions apply to whatever has focus, so every list, table and scrolling pane mov
     gt / gT     next / previous layout
     /           filter                :           command palette           ?   keys
     X           show or hide done checklist items, in every card pane (remembered)
+
+``open_url`` (``tui-trello --open URL``) is a Trello link followed at start-up in place of the default board.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 from rich.text import Text
 from textual import events, work
@@ -114,7 +118,7 @@ class TrelloApp(App):
     ]
 
     def __init__(self, backend: Backend, settings: Settings, drafts: Drafts | None = None,
-                 prefs: Prefs | None = None) -> None:
+                 prefs: Prefs | None = None, open_url: str = "") -> None:
         super().__init__(ansi_color=settings.transparent)
         self.settings = settings
         self.prefs = prefs or Prefs()
@@ -123,16 +127,39 @@ class TrelloApp(App):
         self.store = Store(self, backend, drafts)
         self.pending_chord = ""
         self.following = ""  # the link being followed, if any
+        self.open_url = open_url  # `--open`: a Trello link to follow at start-up, in place of the default board
 
     async def on_mount(self) -> None:
         await self.switch_mode(self.settings.layout)
+        if self.open_url:
+            self.open_link_at_start(self.open_url)
+        else:
+            self.open_start_board()
+        self.check_notifications()
+        if self.settings.notify_interval > 0:
+            self.set_interval(self.settings.notify_interval, self.check_notifications)
+
+    def open_start_board(self) -> None:
         if self.settings.default_board:
             self.open_board(self.settings.default_board)
         elif self.settings.layout in ("browser", "triage"):
             self.action_pick_board()
-        self.check_notifications()
-        if self.settings.notify_interval > 0:
-            self.set_interval(self.settings.notify_interval, self.check_notifications)
+
+    @work
+    async def open_link_at_start(self, url: str) -> None:
+        """`--open`: follow the link as a click would; if that opened no board and no screen, start as usual."""
+        outcome = await self.follow_one_at_a_time(url)
+        if outcome == "nothing" and self.store.snapshot is None:
+            self.open_start_board()
+        elif outcome == "screen" and self.store.snapshot is None:  # an attachments picker, over no board
+            if self.settings.default_board:
+                self.open_board(self.settings.default_board)
+            elif self.settings.layout in ("browser", "triage"):
+                screen = self.screen
+                while screen in self.screen_stack:
+                    await asyncio.sleep(0.1)
+                if self.store.snapshot is None:
+                    self.action_pick_board()
 
     async def on_unmount(self) -> None:
         await self.store.backend.aclose()
@@ -229,13 +256,17 @@ class TrelloApp(App):
     async def action_follow_link(self, url: str) -> None:
         """A click on a link or image in a card's text. One at a time: the same link again, such as a double click, is
         dropped; another is refused with a toast. Neither cancels the first half way through its navigation."""
+        await self.follow_one_at_a_time(url)
+
+    async def follow_one_at_a_time(self, url: str) -> str | None:
+        """Follow the link, and say what came of it (`follow.follow`'s answer); None if another one is under way."""
         if self.following:
             if url != self.following:
                 self.notify("Already opening a link", severity="warning")
-            return
+            return None
         self.following = url
         try:
-            await follow.follow(self, url)
+            return await follow.follow(self, url)
         finally:
             self.following = ""
 

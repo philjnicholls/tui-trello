@@ -9,6 +9,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from rich.text import Text
+from textual.worker import WorkerCancelled
 
 from tui_trello import links
 from tui_trello.backend import BackendError
@@ -22,30 +23,46 @@ ICONS = {"board": "🗂 ", "card": "🃏 ", "comment": "💬 ", "attachment": "�
 KIND_NAMES = {"web": "web page"}  # the others are called what they are
 
 
-async def follow(app, url: str) -> None:
-    """Do what following `url` means: open the card, comment, board or attachment it points to, or the web page."""
+async def follow(app, url: str) -> Literal["screen", "board", "browser", "nothing"]:
+    """Do what following `url` means: open the card, comment, board or attachment it points to, or the web page.
+    Says what came of it: "screen" (the card screen or the attachments picker is up), "board" (the board's browser
+    view is up, or another board load took over), "browser" (the web browser was asked to open it), or "nothing" (a
+    toast says why)."""
     store = app.store
     link = links.parse(url, store.link_hosts)
     try:
         if link.kind == "web":
             open_in_browser(app, url)
-        elif link.kind == "board":
+            return "browser"
+        if link.kind == "board":
             board = await store.board_by_link(link.short_link)
             await app.switch_mode("browser")
             while isinstance(app.screen, CardScreen):  # so the board shows
                 await app.pop_screen()
-            app.open_board(board.id)
-        elif link.kind == "attachment":
+            return await open_board(app, board.id)
+        if link.kind == "attachment":
             attachments = await store.attachments(link.card_id)
             if any(a.id == link.attachment_id for a in attachments):
                 app.push_screen(AttachmentPickerScreen(link.card_id, target=link.attachment_id))
-            else:
-                app.notify("That attachment is no longer on its card", severity="warning")
-        else:
-            card = await store.card_by_link(link.short_link)
-            await show_card(app, card.id, card.board_id, link.comment_id)
+                return "screen"
+            app.notify("That attachment is no longer on its card", severity="warning")
+            return "nothing"
+        card = await store.card_by_link(link.short_link)
+        return "screen" if await show_card(app, card.id, card.board_id, link.comment_id) == "opened" else "nothing"
     except BackendError as exc:
         app.notify(str(exc), title="Could not follow the link", severity="error", markup=False)
+        return "nothing"
+
+
+async def open_board(app, board_id: str) -> Literal["board", "nothing"]:
+    """Load the board in the app's board worker and wait for it. "board" if it loaded, or if the user opened another
+    board meanwhile (that load cancels this one, and wins); "nothing" if it failed (the worker has shown a toast)."""
+    try:
+        await app.open_board(board_id).wait()
+    except WorkerCancelled:
+        return "board"
+    snapshot = app.store.snapshot
+    return "board" if snapshot is not None and snapshot.board.id == board_id else "nothing"
 
 
 def open_in_browser(app, url: str) -> None:

@@ -1899,3 +1899,158 @@ async def test_reaction_keeps_the_scroll_position(app, backend) -> None:
         assert view.scroll_y == before
         assert list(app.screen.query_one("#card-comments").children) == children  # updated in place
         assert "🚀 you" in "\n".join(screen_lines(app))
+
+
+# -- opening a link at start-up (--open) --------------------------------------------------------------------------
+
+
+class RecordingBackend(DemoBackend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.loaded: list[str] = []
+
+    async def board_snapshot(self, board_id: str):
+        self.loaded.append(board_id)
+        return await super().board_snapshot(board_id)
+
+
+def opening(url: str) -> tuple[TrelloApp, RecordingBackend]:
+    backend = RecordingBackend()
+    return TrelloApp(backend, Settings(default_board="b-product"), open_url=url), backend
+
+
+async def test_open_card_link_at_start(backend) -> None:
+    arabic = card_named(backend, "إصلاح خطأ في نموذج التسجيل (عاجل)")
+    app, recording = opening(arabic.url)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        assert isinstance(app.screen, CardScreen) and app.screen.card_id == arabic.id
+        assert app.store.snapshot.board.id == "b-arabic"
+        assert "b-product" not in recording.loaded
+        await pilot.press("escape")
+        assert isinstance(app.screen, BrowserScreen) and app.current_mode == "browser"
+
+
+async def test_open_comment_link_at_start(backend) -> None:
+    split = card_named(backend, "Split backend from UI")
+    grace = next(c for c in await backend.comments(split.id) if c.author == "Grace Hopper")
+    app, _ = opening(split.comment_url(grace.id))
+    async with app.run_test(size=(120, 24)) as pilot:
+        await settle(pilot, 8)
+        assert isinstance(app.screen, CardScreen) and app.screen.card_id == split.id
+        assert comment_in_view(app, grace.id)
+
+
+async def test_open_board_link_at_start() -> None:
+    app, recording = opening("https://trello.example/b/b-home/home")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        assert isinstance(app.screen, BrowserScreen) and not card_screens(app)
+        assert app.store.snapshot.board.id == "b-home"
+        assert "b-product" not in recording.loaded
+
+
+async def test_open_attachment_link_at_start(backend, tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("remember")
+    moving = card_named(backend, "Move cards between lists")
+    notes = await backend.attach_file(moving.id, tmp_path / "notes.txt")
+    app = TrelloApp(backend, Settings(default_board="b-product"), open_url=notes.url)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        assert isinstance(app.screen, AttachmentPickerScreen) and app.screen.highlighted().id == notes.id
+        assert app.store.snapshot.board.id == "b-product"
+        assert not app.following
+
+
+async def test_open_unknown_card_falls_back_to_the_default_board() -> None:
+    app, _ = opening("https://trello.example/c/nope")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        [toast] = app._notifications
+        assert toast.severity == "error" and "No card nope" in toast.message
+        assert isinstance(app.screen, BrowserScreen) and app.store.snapshot.board.id == "b-product"
+
+
+async def test_open_unknown_board_link_falls_back_to_the_default_board() -> None:
+    app, _ = opening("https://trello.example/b/zzzz/x")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        [toast] = app._notifications
+        assert toast.severity == "error"
+        assert isinstance(app.screen, BrowserScreen) and app.store.snapshot.board.id == "b-product"
+
+
+async def test_open_unknown_board_link_without_a_default_board_picks_a_board() -> None:
+    app = TrelloApp(RecordingBackend(), Settings(default_board=""), open_url="https://trello.example/b/zzzz/x")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        assert len(app._notifications) == 1
+        assert isinstance(app.screen, PickerScreen) and app.store.snapshot is None
+
+
+async def test_open_board_link_switches_from_my_work_to_the_browser() -> None:
+    app = TrelloApp(RecordingBackend(), Settings(default_board="b-product", layout="mywork"),
+                    open_url="https://trello.example/b/b-home/home")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        assert app.current_mode == "browser" and isinstance(app.screen, BrowserScreen)
+        assert app.store.snapshot.board.id == "b-home"
+
+
+async def test_open_attachment_link_without_a_default_board_keeps_its_picker(backend, tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("remember")
+    moving = card_named(backend, "Move cards between lists")
+    notes = await backend.attach_file(moving.id, tmp_path / "notes.txt")
+    app = TrelloApp(backend, Settings(default_board=""), open_url=notes.url)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        assert isinstance(app.screen, AttachmentPickerScreen) and app.screen.highlighted().id == notes.id
+        assert [s for s in app.screen_stack if isinstance(s, PickerScreen)] == [app.screen]
+
+
+async def test_picking_a_board_during_an_open_board_link_load_wins() -> None:
+    class SlowHome(RecordingBackend):
+        async def board_snapshot(self, board_id: str):
+            if board_id == "b-home":
+                await asyncio.sleep(0.5)
+            return await super().board_snapshot(board_id)
+
+    app = TrelloApp(SlowHome(), Settings(default_board="b-product"), open_url="https://trello.example/b/b-home/home")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 3)
+        app.open_board("b-arabic")
+        await asyncio.sleep(0.8)
+        await settle(pilot, 5)
+        assert app.store.snapshot.board.id == "b-arabic"
+        assert app._exception is None and not app.following
+
+
+async def test_help_during_a_failing_open_card_fetch_still_shows_the_board_picker() -> None:
+    class SlowFailure(RecordingBackend):
+        async def card(self, card_id: str):
+            await asyncio.sleep(0.6)
+            return await super().card(card_id)
+
+    app = TrelloApp(SlowFailure(), Settings(default_board=""), open_url="https://trello.example/c/nope")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 3)
+        await pilot.press("question_mark")
+        await asyncio.sleep(1)
+        await settle(pilot, 5)
+        assert any(isinstance(s, PickerScreen) for s in app.screen_stack)
+
+
+async def test_closing_an_open_attachment_picker_without_a_default_board_shows_the_board_picker(
+    backend, tmp_path
+) -> None:
+    (tmp_path / "notes.txt").write_text("remember")
+    moving = card_named(backend, "Move cards between lists")
+    notes = await backend.attach_file(moving.id, tmp_path / "notes.txt")
+    app = TrelloApp(backend, Settings(default_board=""), open_url=notes.url)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(pilot, 8)
+        assert isinstance(app.screen, AttachmentPickerScreen)
+        await pilot.press("escape")
+        await asyncio.sleep(0.4)
+        await settle(pilot, 5)
+        assert isinstance(app.screen, PickerScreen) and not isinstance(app.screen, AttachmentPickerScreen)

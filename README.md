@@ -11,6 +11,7 @@ python -m venv venv && venv/bin/pip install -e '.[dev]'
 venv/bin/tui-trello --demo          # sample data, no Trello account needed
 venv/bin/tui-trello                 # your boards
 venv/bin/tui-trello --board tK1afjyM --layout triage
+venv/bin/tui-trello --open 'https://trello.com/c/nVTbsQMq'   # a board, card, comment or attachment link
 ```
 
 ### Logging in
@@ -134,6 +135,13 @@ the link, `ctrl+o` opens it in the web browser instead, `ctrl+y` copies it. A pl
 - An attachment link (a pasted screenshot, say) opens the attachments picker on that file: enter opens it, `ctrl+s`
   saves it.
 - Any other `http`, `https` or `mailto` link opens in the web browser. Other schemes are never opened.
+
+`tui-trello --open URL` follows a link at start-up instead of opening the default board: a board link starts on that
+board, a card link on the card's board with the card open, a comment link the same, scrolled to the comment, and an
+attachment link opens the attachments picker over the default board. It starts in the browser view unless `--layout`
+says otherwise. A URL that isn't a Trello board, card, comment or attachment link is refused before the app starts. With
+`--demo` it takes the demo's `trello.example` links. Put the URL in single quotes: `#`, `?` and `&` mean things to the
+shell. `--open` can't be combined with `--board`, `login` or `logout`.
 
 ## Notifications
 

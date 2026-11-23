@@ -4,13 +4,20 @@ import argparse
 import asyncio
 import sys
 
+from tui_trello import links
 from tui_trello.config import LAYOUTS, Settings
+
+OPENABLE_KINDS = ("board", "card", "comment", "attachment")
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="tui-trello", description="A keyboard-first terminal client for Trello.")
     parser.add_argument("--demo", action="store_true", help="use built-in sample data instead of Trello")
-    parser.add_argument("--board", help="board id or short link to open")
+    start = parser.add_mutually_exclusive_group()
+    start.add_argument("--board", help="board id or short link to open")
+    start.add_argument("--open", metavar="URL",
+                       help="open this Trello board, card, comment or attachment link at start-up "
+                            "(quote it: 'https://trello.com/c/...#comment-...')")
     parser.add_argument("--layout", choices=LAYOUTS, help="screen to start on")
     commands = parser.add_subparsers(dest="command", metavar="{login,logout}")
     login_parser = commands.add_parser("login", help="authorise tui-trello in the browser and save the token")
@@ -18,6 +25,8 @@ def main(argv: list[str] | None = None) -> None:
                               help="use Trello's older flow: paste a long-lived token for the app's API key")
     commands.add_parser("logout", help="forget the saved token")
     args = parser.parse_args(argv)
+    if args.open is not None and args.command:
+        parser.error("--open can't be used with login or logout")
 
     settings = Settings.load()
     if args.command == "login":
@@ -29,6 +38,8 @@ def main(argv: list[str] | None = None) -> None:
         settings.default_board = args.board
     if args.layout:
         settings.layout = args.layout
+    elif args.open is not None:
+        settings.layout = "browser"  # a card opens over its board, whatever config.toml starts on
 
     from tui_trello.drafts import Drafts, drafts_path
 
@@ -36,9 +47,13 @@ def main(argv: list[str] | None = None) -> None:
         from tui_trello.backend.demo import DemoBackend
 
         backend = DemoBackend()
+        if args.open is not None:
+            check_open_url(parser, args.open, getattr(backend, "link_hosts", links.TRELLO_HOSTS))
         settings.default_board = settings.default_board if args.board else "b-product"
         drafts = Drafts(drafts_path().with_name("demo-drafts.json"))  # not mixed in with real cards' drafts
     else:
+        if args.open is not None:  # checked before trello_backend can start a login
+            check_open_url(parser, args.open, links.TRELLO_HOSTS)
         backend = trello_backend(settings)
         drafts = Drafts()
 
@@ -47,7 +62,13 @@ def main(argv: list[str] | None = None) -> None:
 
     # The app lays out RTL text itself; stop bidi terminals reordering whole screen lines (see ui/bidi.py).
     with explicit_mode(sys.__stdout__ if sys.__stdout__ and sys.__stdout__.isatty() else None):
-        TrelloApp(backend, settings, drafts).run()
+        TrelloApp(backend, settings, drafts, open_url=args.open or "").run()
+
+
+def check_open_url(parser: argparse.ArgumentParser, url: str, hosts: frozenset[str]) -> None:
+    """Stop with a usage error unless `url` is a link the app can open."""
+    if links.parse(url, hosts).kind not in OPENABLE_KINDS:
+        parser.error(f"--open: not a Trello board, card, comment or attachment link: {url!r}")
 
 
 def api_key(settings: Settings) -> str:
