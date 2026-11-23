@@ -41,6 +41,10 @@ class Backend(Protocol):
 
     async def board_snapshot(self, board_id: str) -> BoardSnapshot: ...
 
+    async def card(self, card_id: str) -> Card: ...  # an id or a short link
+
+    async def board(self, board_id: str) -> Board: ...  # likewise
+
     async def my_work(self) -> WorkSnapshot: ...
 
     async def comments(self, card_id: str) -> list[Comment]: ...

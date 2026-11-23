@@ -55,6 +55,9 @@ KEYS = [
         ("R", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),
         ("y Y", "copy the link to the card, to one of its comments"),
         ("o", "open in the web browser"),
+        ("L", ("follow a link on the card: Trello cards, comments, boards and attachments open here, the rest in the "
+               "web browser; ctrl+o in the list opens one in the browser, ctrl+y copies it. A click on a link does "
+               "the same")),
         ("y o", "on the lists column, copy or open the board's link (a list has no link of its own)", {"browser"}),
         ("B", "copy the link to the board", {"browser", "triage"}),
     ]),

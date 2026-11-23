@@ -8,6 +8,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from tui_trello import links
 from tui_trello.backend import BackendError
 from tui_trello.models import (
     Attachment,
@@ -125,6 +126,17 @@ PUT /1/cards/{id}?idList=...&pos=top
 ```
 """
 
+# The links the demo shows off, filled in with real URLs once the ids exist.
+LINKS = """\
+Where this came from:
+
+- the card [Move cards between lists]({card})
+- Grace's [review comment]({comment})
+- a sketch: ![picker-sketch.png]({sketch})
+- the [Home]({board}) board
+- the docs: https://textual.textualize.io/
+"""
+
 CHECK_ITEMS = ["Write the tests", "Update the `README.md`", "Try it on a real board", "Ask for a review",
                "Check the Arabic board", "Take **new** screenshots"]
 ARABIC_CHECK_ITEMS = ["الاختبار في Chrome", "الاختبار على الجوال", "تحديث التوثيق", "طلب مراجعة الكود"]
@@ -163,22 +175,37 @@ NOTIFICATIONS = [
 
 class DemoBackend:
     def __init__(self) -> None:
+        self.link_hosts = links.TRELLO_HOSTS | {"trello.example"}  # where the demo's links point; never a real host
         self._ids = (f"id{n}" for n in itertools.count(1))
         self._boards: dict[str, BoardSnapshot] = {}
         self._comments: dict[str, list[Comment]] = {}
         self._checklists: dict[str, list[Checklist]] = {}
         self._attachments: dict[str, list[Attachment]] = {}
         self._files: dict[str, bytes] = {}  # uploads' content, by attachment id
-        for board_id, name, starred, layout in [
-            ("b-product", "Product roadmap", True, PRODUCT_BOARD),
-            ("b-home", "Home", False, HOME_BOARD),
-            ("b-arabic", "مشروع الموقع", False, ARABIC_BOARD),
+        for board_id, name, slug, starred, layout in [
+            ("b-product", "Product roadmap", "product-roadmap", True, PRODUCT_BOARD),
+            ("b-home", "Home", "home", False, HOME_BOARD),
+            ("b-arabic", "مشروع الموقع", "arabic-site", False, ARABIC_BOARD),
         ]:
-            self._boards[board_id] = self._build(Board(board_id, name, f"https://trello.example/{board_id}", starred),
-                                                 layout)
+            self._boards[board_id] = self._build(Board(board_id, name, f"https://trello.example/b/{board_id}/{slug}",
+                                                       starred), layout)
+        self._add_links_description()
         now = datetime.now(timezone.utc)  # "1h ago" should read so whatever the time of day
         self._notifications = [self.notification(kind, who, card, now - timedelta(hours=hours), unread, extra)
                                for kind, who, card, hours, unread, extra in NOTIFICATIONS]
+
+    def _add_links_description(self) -> None:
+        """Give "Offline cache for boards" a description with a card, comment, attachment, board and web link, which
+        can only be written once the ids exist."""
+        snapshot, card = next((s, c) for s in self._boards.values() for c in s.cards
+                              if c.name == "Offline cache for boards")
+        moving = next(c for s in self._boards.values() for c in s.cards if c.name == "Move cards between lists")
+        split = next(c for s in self._boards.values() for c in s.cards if c.name == "Split backend from UI")
+        grace = next(c for c in self._comments[split.id] if c.author == "Grace Hopper")
+        sketch = self._attachments[moving.id][0]
+        home = self._boards["b-home"].board
+        desc = LINKS.format(card=moving.url, comment=split.comment_url(grace.id), sketch=sketch.url, board=home.url)
+        snapshot.replace_card(replace(card, desc=desc))
 
     def notification(self, kind: str, creator: str, card_name: str, date: datetime | None = None,
                      unread: bool = True, extra: str = "") -> Notification:
@@ -281,6 +308,19 @@ class DemoBackend:
         # Hand out a copy, as a real backend would.
         return BoardSnapshot(snapshot.board, list(snapshot.lists), list(snapshot.cards), dict(snapshot.members),
                              list(snapshot.labels))
+
+    async def card(self, card_id: str) -> Card:
+        for snapshot in self._boards.values():
+            for card in snapshot.cards:
+                if card_id in (card.id, links.short_link(card.url, self.link_hosts)):
+                    return card
+        raise BackendError(f"No card {card_id}")
+
+    async def board(self, board_id: str) -> Board:
+        for snapshot in self._boards.values():
+            if board_id in (snapshot.board.id, links.short_link(snapshot.board.url, self.link_hosts)):
+                return snapshot.board
+        raise BackendError(f"No board {board_id}")
 
     async def my_work(self) -> WorkSnapshot:
         me = MEMBERS[ME]

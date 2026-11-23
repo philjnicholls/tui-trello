@@ -38,6 +38,7 @@ from tui_trello.ui.screens.picker import (
     ChecklistPickerScreen,
     Choice,
     LabelPickerScreen,
+    LinkPickerScreen,
     PickerScreen,
     TextPromptScreen,
 )
@@ -70,6 +71,7 @@ class CardActionsScreen(Screen):
         Binding("y", "copy_link", "Copy link", show=False),
         Binding("Y", "copy_comment_link", "Copy comment link", show=False),
         Binding("o", "open_in_browser", "Open in browser", show=False),
+        Binding("L", "follow_link", "Follow link", show=False),
     ]
 
     def current_card(self) -> Card | None:
@@ -222,6 +224,24 @@ class CardActionsScreen(Screen):
     def action_open_in_browser(self) -> None:
         if (card := self.current_card()) and card.url:
             webbrowser.open(card.url)
+
+    @work
+    async def action_follow_link(self) -> None:
+        """Pick one of the links in the card's text and follow it."""
+        # Imported here: follow imports the card screen, which imports this module.
+        from tui_trello.ui import follow
+
+        if not (card := self.current_card()):
+            return
+        try:
+            choices = await follow.link_choices(self.app, card)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        if not choices:
+            self.notify("No links on this card")
+        elif url := await self.app.push_screen_wait(LinkPickerScreen(card, choices)):
+            self.app.action_follow_link(url)  # a worker of the app's: this screen may be popped by the link
 
 
 async def write_comment(screen: Screen, card_id: str, board_id: str, title: str, start: str = "") -> None:

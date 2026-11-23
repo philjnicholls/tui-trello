@@ -5,7 +5,7 @@ from tui_trello.models import Attachment
 
 from tui_trello.auth import TokenAuth
 from tui_trello.backend import BackendError
-from tui_trello.backend.trello import TrelloBackend
+from tui_trello.backend.trello import CARD_FIELDS, TrelloBackend
 
 PAYLOADS = {
     "/1/boards/b1": {"id": "b1", "name": "Roadmap"},
@@ -237,3 +237,25 @@ async def test_create_card_outcome_unknown(backend: TrelloBackend, unsure: bool)
     with pytest.raises(BackendError) as caught:
         await backend.create_card("l1", "New one")
     assert getattr(caught.value, "unsure", None) is unsure
+
+
+async def test_card_and_board_by_short_link() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    PAYLOADS["/1/cards/Xy12Zw34"] = {"id": "c9", "name": "Linked", "idList": "l1", "idBoard": "b1"}
+    PAYLOADS["/1/boards/AbCd1234"] = {"id": "b1", "name": "Roadmap", "url": "https://trello.com/b/AbCd1234/roadmap"}
+    try:
+        assert (await backend.card("Xy12Zw34")).id == "c9"
+        assert (await backend.board("AbCd1234")).name == "Roadmap"
+    finally:
+        del PAYLOADS["/1/cards/Xy12Zw34"], PAYLOADS["/1/boards/AbCd1234"]
+    card_request, board_request = requests
+    assert card_request.url.path == "/1/cards/Xy12Zw34" and card_request.url.params["fields"] == CARD_FIELDS
+    assert board_request.url.path == "/1/boards/AbCd1234"
+
+
+async def test_unknown_short_link_is_an_error() -> None:
+    with pytest.raises(BackendError, match="404"):
+        await make_backend([], status=404).card("nope")
+    with pytest.raises(BackendError, match="404"):
+        await make_backend([], status=404).board("nope")

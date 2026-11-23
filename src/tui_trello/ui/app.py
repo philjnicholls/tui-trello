@@ -28,7 +28,7 @@ from tui_trello.drafts import Drafts
 from tui_trello.prefs import Prefs
 from tui_trello.store import Store
 from tui_trello.models import Notification
-from tui_trello.ui import desktop, keys_compat, render
+from tui_trello.ui import desktop, follow, keys_compat, render
 from tui_trello.ui.commands import BoardCommands, CardCommands
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
@@ -122,6 +122,7 @@ class TrelloApp(App):
         self.done_check_items_toggled: Signal[bool] = Signal(self, "done_check_items_toggled")
         self.store = Store(self, backend, drafts)
         self.pending_chord = ""
+        self.following = ""  # the link being followed, if any
 
     async def on_mount(self) -> None:
         await self.switch_mode(self.settings.layout)
@@ -221,8 +222,22 @@ class TrelloApp(App):
         if self.settings.desktop_notifications and not self.is_headless and self._driver is not None:
             desktop.alert(title, body, self._driver.write)  # App.bell() writes to the driver the same way
 
-    def open_card(self, card_id: str) -> None:
-        self.push_screen(CardScreen(card_id))
+    def open_card(self, card_id: str, comment_id: str = "") -> None:
+        self.push_screen(CardScreen(card_id, comment_id))
+
+    @work
+    async def action_follow_link(self, url: str) -> None:
+        """A click on a link or image in a card's text. One at a time: the same link again, such as a double click, is
+        dropped; another is refused with a toast. Neither cancels the first half way through its navigation."""
+        if self.following:
+            if url != self.following:
+                self.notify("Already opening a link", severity="warning")
+            return
+        self.following = url
+        try:
+            await follow.follow(self, url)
+        finally:
+            self.following = ""
 
     @work
     async def action_pick_board(self) -> None:

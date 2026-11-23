@@ -25,7 +25,7 @@ from textual.widgets.option_list import Option
 from tui_trello.backend import BackendError
 from tui_trello.mentions import candidates, typing_mention
 from tui_trello.files import human_size
-from tui_trello.models import Attachment, Checklist, Member
+from tui_trello.models import Attachment, Card, Checklist, Member
 from tui_trello.ui import clipboard, markdown
 from tui_trello.ui.bidi import BidiText, has_rtl
 
@@ -506,9 +506,20 @@ class AttachmentPickerScreen(PickerScreen):
         Binding("ctrl+y", "copy_link", "Copy link", show=False),
     ]
 
-    def __init__(self, card_id: str) -> None:
+    def __init__(self, card_id: str, target: str = "") -> None:
+        """`target` is the id of the attachment to start on."""
         self.card_id = card_id
+        self.target_id = target
         super().__init__("Attachments", self.attachment_choices)
+
+    def refilter(self) -> None:
+        super().refilter()
+        if self.target_id and self.loaded:  # the first fill only; typed text has the highlight, not the target
+            index = next((i for i, c in enumerate(self.shown)
+                          if isinstance(c.value, Attachment) and c.value.id == self.target_id), None)
+            if index is not None and not self.query_text:
+                self.query_one(OptionList).highlighted = index
+            self.target_id = ""
 
     async def attachment_choices(self) -> list[Choice]:
         from tui_trello.ui.bidi import visual
@@ -575,6 +586,43 @@ class AttachmentPickerScreen(PickerScreen):
         if attachment := self.highlighted():
             clipboard.copy(attachment.url, self.app.copy_to_clipboard)
             self.notify(attachment.url, title="Copied the link")
+
+
+class LinkPickerScreen(PickerScreen[str]):
+    """The links in a card's text. Enter dismisses with the highlighted link's URL, for the caller to follow;
+    ctrl+o opens it in the web browser whatever it is, ctrl+y copies it."""
+
+    HINT = "enter: follow · ctrl+o: open in the browser · ctrl+y: copy link"
+
+    BINDINGS = [
+        Binding("ctrl+o", "open_in_browser", "Open in the browser", show=False),
+        Binding("ctrl+y", "copy_link", "Copy link", show=False),
+    ]
+
+    def __init__(self, card: Card, choices: list[Choice[str]]) -> None:
+        self.card = card
+        super().__init__(f"Links on “{card.name}”", choices)
+
+    def on_mount(self) -> None:
+        from tui_trello.ui.bidi import visual
+
+        self.query_one(".title", Label).update(Text.assemble("Links on “", visual(self.card.name), "”"))
+
+    def highlighted(self) -> str | None:
+        highlighted = self.query_one(OptionList).highlighted
+        return self.shown[highlighted].value if highlighted is not None and highlighted < len(self.shown) else None
+
+    def action_open_in_browser(self) -> None:
+        from tui_trello.ui import follow
+
+        if url := self.highlighted():
+            follow.open_in_browser(self.app, url)
+            self.dismiss(None)
+
+    def action_copy_link(self) -> None:
+        if url := self.highlighted():
+            clipboard.copy(url, self.app.copy_to_clipboard)
+            self.notify(url, title="Copied the link", markup=False)
 
 
 def attachment_marker(attachment: Attachment) -> Text:

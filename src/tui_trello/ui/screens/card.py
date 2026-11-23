@@ -23,9 +23,10 @@ class CardScreen(CardActionsScreen):
 
     BINDINGS = [Binding("escape,q,h,left", "app.pop_screen", "Back")]
 
-    def __init__(self, card_id: str) -> None:
+    def __init__(self, card_id: str, comment_id: str = "") -> None:
         super().__init__()
         self.card_id = card_id
+        self.comment_id = comment_id  # a comment to scroll to and mark, from a link to it
 
     def compose(self) -> ComposeResult:
         with TopBar():
@@ -46,7 +47,11 @@ class CardScreen(CardActionsScreen):
         if context := self.app.store.context_for(self.card_id):
             card = context.card(self.card_id)
             self.query_one("#location", Static).update(visual(Text(context.location(card), style="bold")))
-            self.query_one(CardView).show(card, context)
+            self.query_one(CardView).show(card, context, self.comment_id)
+
+    def show_comment(self, comment_id: str) -> None:
+        self.comment_id = comment_id
+        self.query_one(CardView).show_comment(comment_id)
 
     def current_card(self) -> Card | None:
         return self.app.store.find_card(self.card_id)

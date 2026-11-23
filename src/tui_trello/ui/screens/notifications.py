@@ -18,6 +18,7 @@ from tui_trello.backend import BackendError
 from tui_trello.models import Notification
 from tui_trello.ui import render
 from tui_trello.ui.bidi import fit
+from tui_trello.ui.follow import show_card
 from tui_trello.ui.screens.base import TopBar, reply_to
 from tui_trello.ui.widgets.spinner import Spinner
 
@@ -140,7 +141,8 @@ class NotificationsScreen(Screen):
 
     @work
     async def action_open(self) -> None:
-        """Open the card (loading its board if no loaded snapshot has it), then mark its notifications read."""
+        """Open the card (loading its board if no loaded snapshot has it), then mark its notifications read, unless the
+        board didn't load."""
         store = self.app.store
         if not (n := self.current()):
             return
@@ -150,17 +152,8 @@ class NotificationsScreen(Screen):
                 self.app.open_board(n.board_id)
             await self.mark_read(n)
             return
-        if not store.find_card(n.card_id):
-            try:
-                snapshot = await store.open_board(n.board_id)
-            except BackendError as exc:
-                self.notify(str(exc), title="Could not open board", severity="error")
-                return
-            self.app.sub_title = snapshot.board.name
-        if not store.find_card(n.card_id):
-            self.notify("That card has been archived or deleted.", severity="warning")
-        else:
-            self.app.open_card(n.card_id)
+        if await show_card(self.app, n.card_id, n.board_id) == "error":
+            return  # the board didn't load: the notification is still unseen
         try:
             await store.mark_card_read(n.card_id)
         except BackendError as exc:

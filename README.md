@@ -119,6 +119,22 @@ reactions show under it, each emoji with who gave it (a count, past three people
 through `wl-copy`, `xclip`, `xsel` or `pbcopy`, whichever is installed. Elsewhere, over SSH for instance, the app asks
 the terminal to copy it (OSC 52); most terminals do, but GNOME Terminal and other VTE-based ones don't.
 
+## Following links
+
+Descriptions, comments and checklist items often link to other Trello things. `L` lists every link on the current
+card (in the browser, triage, my work or the card screen) in a picker: each has an icon (🗂 board, 🃏 card, 💬 comment,
+📎 attachment, 🔗 web page), a label, and a hint saying what it is and where it was found. Typing filters; enter follows
+the link, `ctrl+o` opens it in the web browser instead, `ctrl+y` copies it. A plain mouse click on a link, or on an
+`[image: ...]`, follows it the same way; `ctrl+click` still opens the browser directly in terminals that support it.
+
+- A card link opens the card, loading its board first if it isn't open. A comment link also scrolls to the comment and
+  marks it with a bar down its left side (only the newest 50 comments are loaded; for an older one, `o` opens the card
+  on trello.com).
+- A board link opens the board in the browser view.
+- An attachment link (a pasted screenshot, say) opens the attachments picker on that file: enter opens it, `ctrl+s`
+  saves it.
+- Any other `http`, `https` or `mailto` link opens in the web browser. Other schemes are never opened.
+
 ## Notifications
 
 The app checks Trello for new notifications every minute while it runs. Each new one pops up in the corner and as a
@@ -167,6 +183,8 @@ Vim-style throughout; `?` in the app shows the keys for the view you are in, and
 |                        | @mentioning its author                                                             |
 | `R`                    | react to a comment: pick the comment, then an emoji; picking yours takes it off    |
 | `y` `Y`                | copy the link to the card, to one of its comments                                  |
+| `L`                    | follow a link on the card (a click does too): Trello cards, comments, boards and   |
+|                        | attachments open here, the rest in the browser; `ctrl+o` opens one in the browser  |
 | `s`                    | triage: cycle sort (list, due date, last activity)                                 |
 | `p`                    | my work: toggle the preview                                                        |
 | `d` `D` `u`            | notifications: mark read, mark all read, show or hide read ones (remembered)       |

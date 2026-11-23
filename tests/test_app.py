@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 from textual.widgets import DataTable, TextArea
@@ -11,6 +12,7 @@ from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
 from tui_trello.drafts import drafts_path
+from tui_trello.models import CheckItem, Checklist
 from tui_trello.ui import clipboard, render
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
@@ -22,6 +24,7 @@ from tui_trello.ui.screens.picker import (
     ChecklistPickerScreen,
     FilePickerScreen,
     LabelPickerScreen,
+    LinkPickerScreen,
     PickerScreen,
     TextPromptScreen,
 )
@@ -1411,3 +1414,488 @@ async def test_done_check_items_hidden_until_shown(app, backend) -> None:
         await pilot.press("j", "l")
         await pilot.pause()
         assert "☑ Write the tests" in "\n".join(screen_lines(app))  # still shown, after a restart
+
+
+# -- following links ---------------------------------------------------------------------------------------------
+
+
+async def settle(pilot, times: int = 4) -> None:
+    for _ in range(times):
+        await pilot.pause()
+
+
+async def on_links_card(app, pilot) -> None:
+    """The browser with "Offline cache for boards", whose description has the demo's links, as the current card."""
+    await pilot.pause()
+    await pilot.press("j", "l", "j", "j")
+    assert app.screen.current_card().name == "Offline cache for boards"
+    await settle(pilot)
+
+
+def card_named(backend, name: str):
+    return next(c for s in backend._boards.values() for c in s.cards if c.name == name)
+
+
+def card_screens(app) -> list[CardScreen]:
+    return [s for s in app.screen_stack if isinstance(s, CardScreen)]
+
+
+def comment_in_view(app, comment_id: str) -> bool:
+    widget = app.screen.query_one(f"#comment-{comment_id}")
+    return widget.has_class("target") and app.screen.query_one(CardView).region.contains_region(widget.region)
+
+
+async def test_follow_card_link(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        assert isinstance(app.screen, LinkPickerScreen)
+        assert [c.label for c in app.screen.choices] == [
+            "Move cards between lists", "review comment", "picker-sketch.png", "Home", "textual.textualize.io/"]
+        assert [c.hint for c in app.screen.choices][:4] == [
+            "card · description", "comment · description", "attachment · description", "board · description"]
+        await pilot.press(*"move", "enter")
+        await settle(pilot)
+        assert isinstance(app.screen, CardScreen)
+        assert app.screen.current_card().name == "Move cards between lists"
+        await pilot.press("escape")
+        assert isinstance(app.screen, BrowserScreen)
+
+
+async def test_follow_comment_link(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"review", "enter")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, CardScreen)
+        assert app.screen.current_card().name == "Split backend from UI"
+        grace = next(c for c in await app.store.comments(app.screen.card_id) if c.author == "Grace Hopper")
+        assert comment_in_view(app, grace.id)
+
+
+async def test_follow_comment_link_on_the_same_card(app, backend) -> None:
+    from tui_trello.ui import follow
+
+    split = card_named(backend, "Split backend from UI")
+    grace = next(c for c in await backend.comments(split.id) if c.author == "Grace Hopper")
+    async with app.run_test(size=(120, 24)) as pilot:
+        await pilot.pause()
+        app.open_card(split.id)
+        await settle(pilot, 8)
+        assert not app.screen.query(".comment.target")
+        await follow.follow(app, split.comment_url(grace.id))
+        await settle(pilot, 8)
+        assert len(card_screens(app)) == 1 and comment_in_view(app, grace.id)
+        app.screen.query_one(CardView).scroll_home(animate=False)
+        await follow.follow(app, split.comment_url(grace.id))
+        await settle(pilot, 8)
+        assert len(card_screens(app)) == 1 and comment_in_view(app, grace.id)
+        await follow.follow(app, split.url)
+        await pilot.pause()
+        assert [t.message for t in app._notifications][-1] == "That's this card"
+
+
+async def test_follow_link_to_another_board(app, backend) -> None:
+    arabic = card_named(backend, "إصلاح خطأ في نموذج التسجيل (عاجل)")
+    shortcut = card_named(backend, "Command palette: jump to any card")
+    await backend.add_comment(shortcut.id, f"see {arabic.url}")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "l")
+        assert app.screen.current_card().id == shortcut.id
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, CardScreen) and app.screen.card_id == arabic.id
+        assert app.store.snapshot.board.id == "b-arabic"
+
+
+async def test_follow_attachment_link(app, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(store_module, "download_dir", lambda: tmp_path / "Downloads")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"picker", "enter")
+        await settle(pilot)
+        assert isinstance(app.screen, AttachmentPickerScreen)
+        assert app.screen.highlighted().name == "picker-sketch.png"
+        await pilot.press("ctrl+s")
+        await settle(pilot)
+        assert (tmp_path / "Downloads" / "picker-sketch.png").read_bytes().startswith(b"\x89PNG")
+
+
+async def test_follow_attachment_link_highlights_that_attachment(app, backend, tmp_path) -> None:
+    from tui_trello.ui import follow
+
+    (tmp_path / "notes.txt").write_text("remember")
+    moving = card_named(backend, "Move cards between lists")
+    notes = await backend.attach_file(moving.id, tmp_path / "notes.txt")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await follow.follow(app, notes.url)
+        await settle(pilot)
+        assert isinstance(app.screen, AttachmentPickerScreen) and app.screen.highlighted().id == notes.id
+        await pilot.press("escape")
+        await follow.follow(app, notes.url.replace(notes.id, "gone"))
+        await pilot.pause()
+        assert [t.message for t in app._notifications][-1] == "That attachment is no longer on its card"
+
+
+async def test_follow_board_link(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("enter")  # the card screen
+        await settle(pilot)
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"home", "enter")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, BrowserScreen) and not card_screens(app)
+        assert app.store.snapshot.board.id == "b-home"
+
+
+async def test_follow_web_link(app, monkeypatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"textual", "enter")
+        await settle(pilot)
+        assert opened == ["https://textual.textualize.io/"]
+
+
+async def test_follow_link_ctrl_o_opens_browser(app, backend, monkeypatch) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"move", "ctrl+o")
+        await settle(pilot)
+        assert opened == [card_named(backend, "Move cards between lists").url]
+        assert isinstance(app.screen, BrowserScreen)
+
+
+async def test_link_picker_copies_the_link(app, monkeypatch) -> None:
+    monkeypatch.setattr(clipboard, "command", lambda: None)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"textual", "ctrl+y")
+        assert app.clipboard == "https://textual.textualize.io/"
+
+
+async def test_unsafe_link_is_not_opened(app, monkeypatch) -> None:
+    from tui_trello.ui import follow
+
+    opened: list[str] = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        for url in ("javascript:alert(1)", "file:///etc/passwd"):
+            await follow.follow(app, url)
+        await pilot.pause()
+        assert opened == []
+        assert [t.message for t in app._notifications] == ["Not opening a javascript: link",
+                                                            "Not opening a file: link"]
+        assert {t.severity for t in app._notifications} == {"warning"}
+
+
+async def test_unresolvable_link_is_a_toast(app) -> None:
+    from tui_trello.ui import follow
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await follow.follow(app, "https://trello.example/c/nope")
+        await pilot.pause()
+        [toast] = app._notifications
+        assert toast.severity == "error" and "No card nope" in toast.message
+        assert isinstance(app.screen, BrowserScreen)
+
+
+async def test_click_follows_link(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        lines = screen_lines(app)
+        y = next(i for i, line in enumerate(lines) if "the Home board" in line)
+        await pilot.click(offset=(lines[y].index("Home") + 1, y))
+        await settle(pilot, 8)
+        assert app.store.snapshot.board.id == "b-home"
+        assert isinstance(app.screen, BrowserScreen)
+
+
+async def test_no_links(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")  # Inbox: Crash when a card has no description
+        await pilot.press("L")
+        await settle(pilot)
+        assert isinstance(app.screen, BrowserScreen)
+        assert [t.message for t in app._notifications] == ["No links on this card"]
+
+
+async def test_missing_comment(app, backend) -> None:
+    from tui_trello.ui import follow
+
+    split = card_named(backend, "Split backend from UI")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await follow.follow(app, split.comment_url("made-up"))
+        await settle(pilot, 8)
+        assert isinstance(app.screen, CardScreen) and app.screen.card_id == split.id
+        assert [t.message for t in app._notifications][-1].startswith("That comment isn't on the card any more")
+        assert not app.screen.query(".comment.target")
+
+
+async def test_help_lists_follow_link(app) -> None:
+    async with app.run_test(size=(120, 100)) as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert any("follow a link" in line and "L" in line.split() for line in screen_lines(app))
+
+
+async def test_browsing_fast_leaves_the_last_cards_comments(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "j", "l", "j", "k", "j", "k", "j")
+        await settle(pilot, 8)
+        card = app.screen.current_card()
+        ids = [c.id for c in app.screen.query_one("#card-comments").children]
+        assert ids == [f"comment-{c.id}" for c in await app.store.comments(card.id)] or not ids
+
+
+class FailingBoard(DemoBackend):
+    async def board_snapshot(self, board_id: str):
+        if board_id == "b-arabic":
+            raise BackendError("Could not reach Trello.")
+        return await super().board_snapshot(board_id)
+
+
+async def test_notification_stays_unread_when_its_board_fails_to_load(backend) -> None:
+    backend.push_notification(backend.notification("commentCard", "Alan Turing", "إصلاح خطأ في نموذج التسجيل (عاجل)"))
+    failing = FailingBoard()
+    failing._notifications, failing._boards = backend._notifications, backend._boards
+    app = TrelloApp(failing, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        unread = app.store.unread_count
+        await pilot.press("4")
+        await settle(pilot)
+        assert app.screen.shown[0].card_name == "إصلاح خطأ في نموذج التسجيل (عاجل)"
+        await pilot.press("enter")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, NotificationsScreen)
+        assert app.store.unread_count == unread
+        assert [t.title for t in app._notifications] == ["Could not open board"]
+
+
+async def test_notification_of_a_gone_card_is_marked_read(app, backend) -> None:
+    note = backend.notification("commentCard", "Alan Turing", "Split backend from UI")
+    backend.push_notification(note := type(note)(**{**note.__dict__, "card_id": "gone"}))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        unread = app.store.unread_count
+        await pilot.press("4")
+        await settle(pilot)
+        await pilot.press("enter")
+        await settle(pilot, 8)
+        assert app.store.unread_count == unread - 1
+        assert [t.message for t in app._notifications] == ["That card has been archived or deleted."]
+
+
+class SlowSections(DemoBackend):
+    """Answers a card's attachments and checklists only when released, after its comments."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def attachments(self, card_id: str):
+        await self.release.wait()
+        return await super().attachments(card_id)
+
+    async def checklists(self, card_id: str):
+        await self.release.wait()
+        return await super().checklists(card_id)
+
+
+async def test_scroll_to_linked_comment_survives_late_sections() -> None:
+    from tui_trello.ui import follow
+
+    backend = SlowSections()
+    split = card_named(backend, "Split backend from UI")
+    comments = await backend.comments(split.id)
+    first = comments[0]
+    backend._attachments[split.id] = [await backend.attach_link(split.id, f"https://example.com/{n}")
+                                      for n in range(6)]
+    backend._checklists[split.id] = [Checklist("cl1", "Things", tuple(CheckItem(f"ci{n}", f"item {n}", False, n)
+                                                                       for n in range(8)))]
+    snapshot, card = backend._find(split.id)
+    snapshot.replace_card(replace(card, checklist=(0, 8)))
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 20)) as pilot:
+        await pilot.pause()
+        await follow.follow(app, split.comment_url(comments[-1].id))
+        await settle(pilot, 8)
+        backend.release.set()
+        await settle(pilot, 12)
+        assert comment_in_view(app, comments[-1].id)
+        assert first.id != comments[-1].id
+
+
+async def test_redraw_mid_load_keeps_the_scroll_waiting_for_the_sections() -> None:
+    from tui_trello.ui import follow
+
+    backend = SlowSections()
+    split = card_named(backend, "Split backend from UI")
+    comments = await backend.comments(split.id)
+    backend._attachments[split.id] = [await backend.attach_link(split.id, f"https://example.com/{n}")
+                                      for n in range(6)]
+    backend._checklists[split.id] = [Checklist("cl1", "Things", tuple(CheckItem(f"ci{n}", f"item {n}", False, n)
+                                                                       for n in range(8)))]
+    snapshot, card = backend._find(split.id)
+    snapshot.replace_card(replace(card, checklist=(0, 8)))
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 20)) as pilot:
+        await pilot.pause()
+        await follow.follow(app, split.comment_url(comments[-1].id))
+        await settle(pilot, 8)
+        view = app.screen.query_one(CardView)
+        assert view.sections_loading == {"attachments", "checklists"}
+        app.store.board_changed.publish(app.store.snapshot)  # the same card is drawn again, its loads restarted
+        await settle(pilot, 8)
+        assert view.sections_loading == {"attachments", "checklists"}
+        assert view.scroll_pending
+        assert not comment_in_view(app, comments[-1].id)
+        backend.release.set()
+        await settle(pilot, 12)
+        assert not view.sections_loading
+        assert comment_in_view(app, comments[-1].id)
+
+
+async def test_redraw_of_the_same_card_keeps_comments_and_scroll(app, backend) -> None:
+    async with app.run_test(size=(120, 14)) as pilot:
+        await pilot.pause()
+        split = card_named(backend, "Split backend from UI")
+        app.open_card(split.id)
+        await settle(pilot, 8)
+        view = app.screen.query_one(CardView)
+        view.scroll_to(y=view.max_scroll_y, animate=False)
+        await settle(pilot)
+        before, children = view.scroll_y, list(app.screen.query_one("#card-comments").children)
+        assert before > 0 and children
+        app.store.board_changed.publish(app.store.snapshot)
+        await settle(pilot, 8)
+        assert view.scroll_y == before
+        assert list(app.screen.query_one("#card-comments").children) == children
+
+
+async def test_switching_card_shows_only_the_new_cards_comments(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        split = card_named(backend, "Split backend from UI")
+        other = card_named(backend, "Move cards between lists")
+        app.open_card(split.id)
+        await settle(pilot, 8)
+        assert app.screen.query_one("#card-comments").children
+        await app.store.comments(other.id)  # cached, as after browsing
+        view = app.screen.query_one(CardView)
+        view.show(app.store.find_card(other.id), app.store.context_for(other.id))
+        await settle(pilot, 8)
+        shown = {w.id for w in app.screen.query_one("#card-comments").children}
+        assert not shown & {f"comment-{c.id}" for c in await backend.comments(split.id)}
+        assert shown == {f"comment-{c.id}" for c in await backend.comments(other.id)}
+
+
+async def test_failing_section_load_releases_the_scroll(app, backend, monkeypatch) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        split = card_named(backend, "Split backend from UI")
+        app.store.snapshot.replace_card(replace(app.store.find_card(split.id), attachment_count=1))
+
+        async def boom(card_id):
+            raise BackendError("boom")
+
+        monkeypatch.setattr(app.store, "attachments", boom)
+        app.open_card(split.id)
+        await settle(pilot, 8)
+        view = app.screen.query_one(CardView)
+        assert "attachments" not in view.sections_loading
+        assert app.screen.query_one("#card-attachments").has_class("visible")  # the error is shown
+
+
+async def test_double_follow_pushes_one_picker(app, backend, tmp_path, monkeypatch) -> None:
+    import asyncio
+
+    (tmp_path / "notes.txt").write_text("remember")
+    notes = await backend.attach_file(card_named(backend, "Move cards between lists").id, tmp_path / "notes.txt")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        attachments = app.store.attachments
+
+        async def slow(card_id):
+            await asyncio.sleep(0.2)  # the first follow is still going when the second comes
+            return await attachments(card_id)
+
+        monkeypatch.setattr(app.store, "attachments", slow)
+        app.action_follow_link(notes.url)
+        app.action_follow_link(notes.url)
+        await asyncio.sleep(0.5)
+        await settle(pilot, 8)
+        assert [s for s in app.screen_stack if isinstance(s, AttachmentPickerScreen)] == [app.screen]
+
+
+async def test_follow_of_another_link_while_one_is_open_says_so(app, backend, tmp_path, monkeypatch) -> None:
+    import asyncio
+
+    (tmp_path / "notes.txt").write_text("remember")
+    notes = await backend.attach_file(card_named(backend, "Move cards between lists").id, tmp_path / "notes.txt")
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        attachments = app.store.attachments
+
+        async def slow(card_id):
+            await asyncio.sleep(0.2)
+            return await attachments(card_id)
+
+        monkeypatch.setattr(app.store, "attachments", slow)
+        app.action_follow_link(notes.url)
+        app.action_follow_link(notes.url)  # the same link: dropped without a word
+        await pilot.pause()
+        assert not app._notifications
+        app.action_follow_link("https://example.com/other")
+        await pilot.pause()
+        assert [n.message for n in app._notifications] == ["Already opening a link"]
+        await asyncio.sleep(0.5)
+        await settle(pilot, 8)
+        assert not app.following
+
+
+async def test_reaction_keeps_the_scroll_position(app, backend) -> None:
+    async with app.run_test(size=(120, 14)) as pilot:
+        await pilot.pause()
+        split = card_named(backend, "Split backend from UI")
+        app.open_card(split.id)
+        await settle(pilot, 8)
+        view = app.screen.query_one(CardView)
+        view.scroll_to(y=view.max_scroll_y, animate=False)
+        await settle(pilot)
+        assert view.scroll_y > 0
+        before, children = view.scroll_y, list(app.screen.query_one("#card-comments").children)
+        comment = next(c for c in await app.store.comments(split.id) if c.text == "Looks good to me.")
+        await app.store.toggle_reaction(split.id, comment, "rocket", "🚀")
+        await settle(pilot, 8)
+        assert view.scroll_y == before
+        assert list(app.screen.query_one("#card-comments").children) == children  # updated in place
+        assert "🚀 you" in "\n".join(screen_lines(app))

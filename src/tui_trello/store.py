@@ -16,6 +16,7 @@ from pathlib import Path
 from textual.dom import DOMNode
 from textual.signal import Signal
 
+from tui_trello import links
 from tui_trello.backend import Backend, BackendError
 from tui_trello.drafts import Draft, Drafts, Kind, new_card_id
 from tui_trello.files import download_dir, unique_path
@@ -184,6 +185,38 @@ class Store:
     def find_card(self, card_id: str) -> Card | None:
         context = self.context_for(card_id)
         return context.card(card_id) if context else None
+
+    @property
+    def link_hosts(self) -> frozenset[str]:
+        """The hosts whose URLs are Trello links: trello.com, and the backend's own, if it has any."""
+        return getattr(self.backend, "link_hosts", links.TRELLO_HOSTS)
+
+    def known_card(self, short_link: str) -> Card | None:
+        """A loaded card whose URL has this short link (or whose id this is); no request is made."""
+        hosts = self.link_hosts
+        return next((card for context in self.contexts() for card in context.cards
+                     if short_link in (card.id, links.short_link(card.url, hosts))), None)
+
+    def known_board(self, short_link: str) -> Board | None:
+        """The open board, or one of the cached or My work boards, with this short link (or id); no request is made."""
+        boards = [self.snapshot.board] if self.snapshot else []
+        boards += self._boards or []
+        boards += list(self.work.boards.values()) if self.work else []
+        hosts = self.link_hosts
+        return next((b for b in boards if short_link in (b.id, links.short_link(b.url, hosts))), None)
+
+    async def card_by_link(self, short_link: str) -> Card:
+        """The card with this short link: a loaded one, else asked of the backend."""
+        if card := self.known_card(short_link):
+            return card
+        async with self._busy("card"):
+            return await self.backend.card(short_link)
+
+    async def board_by_link(self, short_link: str) -> Board:
+        if board := self.known_board(short_link):
+            return board
+        async with self._busy("board"):
+            return await self.backend.board(short_link)
 
     async def comments(self, card_id: str, refresh: bool = False) -> list[Comment]:
         if card_id not in self._comments or refresh:

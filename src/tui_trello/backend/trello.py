@@ -99,6 +99,12 @@ class TrelloBackend:
             labels=[Label.from_api(label) for label in labels],
         )
 
+    async def card(self, card_id: str) -> Card:
+        return Card.from_api(await self._request("GET", f"/cards/{card_id}", fields=CARD_FIELDS))
+
+    async def board(self, board_id: str) -> Board:
+        return Board.from_api(await self._request("GET", f"/boards/{board_id}", fields="name,url,starred"))
+
     async def my_work(self) -> WorkSnapshot:
         me, cards, boards = await asyncio.gather(
             self._request("GET", "/members/me", fields="fullName,username"),

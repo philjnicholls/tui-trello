@@ -15,6 +15,7 @@ src/tui_trello/
   agenda.py           group cards by due date for My work
   files.py            the downloads folder, unique file names, human-readable sizes
   query.py            the card filter language (#label @member list:x !overdue words)
+  links.py            what a URL points to: a Trello board, card, comment or attachment, or a web page
   quote.py            replies: what of a comment to quote, cut to size, as a block quote and @mention
   store.py            app-wide state: open board, my work, notifications, caches; board_changed, work_changed and
                       notifications_changed signals
@@ -30,13 +31,15 @@ src/tui_trello/
     markdown.py       Markdown in descriptions, comments and checklists as styled, RTL-aware text
     desktop.py        desktop notifications: notify-send, or the terminal's OSC 777 / OSC 9
     clipboard.py      copying links: wl-copy, xclip, xsel or pbcopy, or the terminal's OSC 52
+    follow.py         following a link: sends it to the card screen, the browser view, the attachment picker or
+                      the web browser; the link picker's rows
     tips.py           the tips the card pane shows while there is no card
     widgets/
       card_view.py    card header, description, attachments, checklists, comments; a rotating tip with no card
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
       bell.py         the top-bar unread-notification count (a red 🔔)
     screens/
-      base.py         CardActionsScreen (m, c, e, t, x, a, R, y, Y, o), ListScreen (/ filter, n new
+      base.py         CardActionsScreen (m, c, e, t, x, a, R, y, Y, o, L), ListScreen (/ filter, n new
                       card), BoardScreen (redraws on board_changed)
       browser.py      Miller columns: lists | cards | preview
       triage.py       sortable, filterable table of every card
@@ -44,7 +47,7 @@ src/tui_trello/
       notifications.py  Trello's notifications; enter opens the card, d / D mark read, u hides read ones, C replies
       card.py         full-screen card
       keys.py         the ? key reference: the keys for the screen's HELP_PLACE, a for all
-      picker.py       PickerScreen (fuzzy choose one), its label, checklist, attachment and file
+      picker.py       PickerScreen (fuzzy choose one), its label, checklist, attachment, link and file
                       variants, and TextPromptScreen (ctrl+o attaches a file)
 tests/                pytest; UI flows driven by key presses against the demo backend
 scripts/screenshots.py

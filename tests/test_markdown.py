@@ -2,7 +2,7 @@ import io
 
 from rich.console import Console
 
-from tui_trello.ui.markdown import inline, render
+from tui_trello.ui.markdown import Link, inline, links, render
 
 
 def lines(source: str, width: int = 40) -> list[str]:
@@ -72,3 +72,52 @@ def test_table() -> None:
 
 def test_trello_link_with_url_as_text_shows_once() -> None:
     assert lines("[https://x.org](https://x.org)") == ["https://x.org"]
+
+
+def clicks(renderable) -> dict[str, tuple]:
+    """Each piece of text that runs an action when clicked, and the action."""
+    console = Console(width=80)
+    return {segment.text.strip(): segment.style.meta["@click"] for segment in console.render(renderable)
+            if segment.style and segment.style.meta.get("@click")}
+
+
+def test_links_in_order() -> None:
+    source = ("see [the card](https://trello.com/c/abc) and https://example.com/x\n\n"
+              "![shot.png](https://trello.com/1/cards/c/attachments/a/download/shot.png)\n\n"
+              "- [item](https://example.com/y)")
+    assert links(source) == [
+        Link("the card", "https://trello.com/c/abc"), Link("https://example.com/x", "https://example.com/x"),
+        Link("shot.png", "https://trello.com/1/cards/c/attachments/a/download/shot.png"),
+        Link("item", "https://example.com/y")]
+    assert links("**[one](https://a.example)** and `code`", one_line=True) == [Link("one", "https://a.example")]
+    assert links("no links here") == []
+
+
+def test_clickable_links_and_images() -> None:
+    found = clicks(render("a [site](https://example.com) and ![pic.png](https://example.com/pic.png) https://b.example",
+                          clickable=True))
+    assert found == {
+        "site": ("app.follow_link", ("https://example.com",)),
+        "[image: pic.png]": ("app.follow_link", ("https://example.com/pic.png",)),
+        "https://b.example": ("app.follow_link", ("https://b.example",)),
+    }
+
+
+def test_links_are_not_clickable_by_default() -> None:
+    assert clicks(render("a [site](https://example.com) ![pic](https://example.com/p.png)")) == {}
+    assert "link" in styles("[site](https://example.com)")["site"] or "example.com" in styles(
+        "[site](https://example.com)")["site"]
+
+
+def test_clickable_inline_and_in_blocks() -> None:
+    text = inline("go to [it](https://example.com)", clickable=True)
+    assert [span.style.meta["@click"] for span in text.spans if span.style.meta.get("@click")] == [
+        ("app.follow_link", ("https://example.com",))]
+    assert not [s for s in inline("go to [it](https://example.com)").spans if s.style.meta.get("@click")]
+    assert clicks(render("> - [deep](https://example.com)\n\n| a |\n| - |\n| [cell](https://b.example) |",
+                         clickable=True)).keys() == {"deep", "cell"}
+
+
+def test_rtl_link_keeps_its_click() -> None:
+    found = clicks(render("انظر [البطاقة](https://trello.com/c/abc) من فضلك", clickable=True))
+    assert found and set(found.values()) == {("app.follow_link", ("https://trello.com/c/abc",))}

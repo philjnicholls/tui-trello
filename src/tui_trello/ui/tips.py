@@ -20,6 +20,7 @@ TIPS = (
     "`ctrl+o` in a comment or description attaches a file and puts its link in.",
     "`y` copies a card's link, `Y` the link to one of its comments.",
     "`o` opens the card on trello.com.",
+    "`L` follows a link on a card: a Trello card, comment, board or attachment opens right here. So does a click.",
     "In notifications, `u` shows or hides the ones you've read; tui-trello remembers which.",
     "`s` in triage cycles the sort: list, due date, last activity.",
     "`p` in my work shows or hides the card preview.",

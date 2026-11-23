@@ -36,7 +36,8 @@ class CardView(VerticalScroll):
     CardView #card-meta { margin-bottom: 1; }
     CardView .section { text-style: bold; color: $text-muted; border-bottom: solid $panel-lighten-2; }
     CardView #card-desc { margin-bottom: 1; }
-    CardView #card-comments { margin-bottom: 1; min-height: 1; }
+    CardView #card-comments { height: auto; margin-bottom: 1; min-height: 1; }
+    CardView .comment.target { border-left: thick $accent; padding-left: 1; }
     CardView .checklists, CardView .attachments { display: none; }
     CardView .checklists.visible, CardView .attachments.visible { display: block; }
     CardView #card-attachments { margin-bottom: 1; }
@@ -55,6 +56,11 @@ class CardView(VerticalScroll):
         self.card: Card | None = None
         self.context: CardContext | None = None
         self.checklists: list[Checklist] | None = None  # as last drawn; None while they load or after an error
+        self.target_comment = ""  # the comment a followed link points to: marked, and scrolled to once
+        self.scroll_pending = False
+        self.comments_shown = False  # the card's comments are in `#card-comments` (not an error or still loading)
+        self.comments_card = ""  # the card whose comments `#card-comments` holds
+        self.sections_loading: set[str] = set()  # attachments, checklists: above the comments, so they move them
         self.tip = random.randrange(len(TIPS))
 
     def on_mount(self) -> None:
@@ -89,7 +95,7 @@ class CardView(VerticalScroll):
             yield Static("Checklists", classes="section checklists")
             yield Static(id="card-checklists", classes="checklists")
             yield Static("Comments", classes="section")
-            yield Static(id="card-comments")
+            yield Vertical(id="card-comments")
 
     def show_tip(self) -> None:
         self.query_one("#card-tip", Static).update(Group(
@@ -103,23 +109,33 @@ class CardView(VerticalScroll):
             self.tip = (self.tip + 1) % len(TIPS)
             self.show_tip()
 
-    def show(self, card: Card | None, context: CardContext) -> None:
+    def show(self, card: Card | None, context: CardContext, comment_id: str = "") -> None:
+        """Draw the card. With `comment_id`, mark that comment and scroll to it once the comments are in."""
+        same_card = card is not None and self.card is not None and card.id == self.card.id
+        if not same_card:
+            self.target_comment, self.scroll_pending = "", False
         self.card, self.context = card, context
-        self.scroll_home(animate=False)
+        self.comments_shown = False
+        self.sections_loading = set()
+        if comment_id and comment_id != self.target_comment:
+            self.target_comment, self.scroll_pending = comment_id, True
+        if not same_card:  # a redraw of the card keeps the view where it is
+            self.scroll_home(animate=False)
         self.set_class(card is None, "empty")
         if card is None:
             return
         self.query_one("#card-title", Static).update(BidiText(card.name))
         self.show_meta(card, context)
         self.show_description(card.desc)
-        self.query_one("#card-comments", Static).update("")  # the top bar's spinner shows comments loading
-        self.load_comments(card)
+        self.load_comments(card)  # clears the comments of another card; the top bar's spinner shows it loading
         if card.attachment_count or self.app.store.has_attachments(card.id):
+            self.sections_loading.add("attachments")
             self.load_attachments(card)
         else:
             self.show_attachments([])
         self.checklists = None
         if card.checklist[1] or self.app.store.has_checklists(card.id):
+            self.sections_loading.add("checklists")
             self.load_checklists(card)
         else:
             self.show_checklists([])
@@ -141,7 +157,7 @@ class CardView(VerticalScroll):
 
     def show_description(self, desc: str) -> None:
         self.query_one("#card-desc", Static).update(
-            markdown.render(desc) if desc.strip() else Text("No description.", style="dim italic"))
+            markdown.render(desc, clickable=True) if desc.strip() else Text("No description.", style="dim italic"))
 
     def show_checklists(self, checklists: list[Checklist]) -> None:
         """Each checklist's heading and its items; the ticked ones only once `X` has shown them."""
@@ -168,8 +184,8 @@ class CardView(VerticalScroll):
     @staticmethod
     def item_line(item: CheckItem) -> BidiText:
         return BidiText(
-            Text.assemble(("☑ ", "green"), markdown.inline(item.name, Style(dim=True, strike=True)))
-            if item.checked else Text.assemble(("☐ ", "dim"), markdown.inline(item.name)))
+            Text.assemble(("☑ ", "green"), markdown.inline(item.name, Style(dim=True, strike=True), clickable=True))
+            if item.checked else Text.assemble(("☐ ", "dim"), markdown.inline(item.name, clickable=True)))
 
     def redraw_checklists(self) -> None:
         """After `X`: the same checklists again, without scrolling, so the reader keeps their place."""
@@ -186,48 +202,123 @@ class CardView(VerticalScroll):
 
     @work(exclusive=True, group="attachments")
     async def load_attachments(self, card: Card) -> None:
-        try:
-            attachments = await self.app.store.attachments(card.id)
-        except BackendError as exc:
+        def failed(exc: BackendError) -> None:
             self.query(".attachments").add_class("visible")
             self.query_one("#card-attachments", Static).update(Text(str(exc), style="red"))
-            return
-        if self.card is not None and self.card.id == card.id:
-            self.show_attachments(attachments)
+
+        await self.load_section("attachments", card, self.app.store.attachments, self.show_attachments, failed)
 
     @work(exclusive=True, group="checklists")
     async def load_checklists(self, card: Card) -> None:
-        try:
-            checklists = await self.app.store.checklists(card.id)
-        except BackendError as exc:
+        def failed(exc: BackendError) -> None:
             self.checklists = None
             self.query(".checklists").add_class("visible")
             self.query_one("#card-checklists", Static).update(Text(str(exc), style="red"))
+
+        await self.load_section("checklists", card, self.app.store.checklists, self.show_checklists, failed)
+
+    async def load_section(self, name: str, card: Card, fetch, show, on_error) -> None:
+        """Fetch a section above the comments and draw it, or say why it failed, and then release the hold it has on
+        the scroll to a comment. A cancelled load doesn't release: the worker that cancelled it is a new load of the
+        section, which took the hold again."""
+        try:
+            result = await fetch(card.id)
+        except BackendError as exc:
+            on_error(exc)
+        else:
+            if self.card is not None and self.card.id == card.id:
+                show(result)
+        self.section_loaded(name, card)
+
+    def section_loaded(self, name: str, card: Card) -> None:
+        """A section above the comments is in; with all of them in, a pending scroll to a comment can be done."""
+        if self.card is None or self.card.id != card.id:
             return
-        if self.card is not None and self.card.id == card.id:
-            self.show_checklists(checklists)
+        self.sections_loading.discard(name)
+        if self.comments_shown:
+            self.mark_target()
 
     @work(exclusive=True, group="comments")
     async def load_comments(self, card: Card, refresh: bool = False) -> None:
+        widgets: list[Static]
+        container = self.query_one("#card-comments", Vertical)
+        if self.comments_card != card.id:  # another card's comments: out before the diff, which waits for it
+            await container.remove_children()
+            self.comments_card = card.id
         try:
             comments = await self.app.store.comments(card.id, refresh=refresh)
             me_id = (await self.app.store.me()).id
         except BackendError as exc:
-            comments_text = Text(str(exc), style="red")
+            widgets = [Static(Text(str(exc), style="red"))]
+            comments = None
         else:
             if self.card is None or self.card.id != card.id:
                 return  # the user has moved on
-            parts = []
-            for comment in comments:
-                when = f"{comment.date:%d %b %H:%M}" if comment.date else ""
-                parts += [Text.assemble(("● ", "magenta"), visual(Text(comment.author, style="bold")), "  ",
-                                        (when, "dim")), markdown.render(comment.text)]
-                if counts := comment.reaction_counts(me_id):
-                    parts.append(Text("  ").join(self.reaction(comment, name, native, n, mine, me_id)
-                                                 for name, native, n, mine in counts))
-                parts.append(Text(""))
-            comments_text = Group(*parts) if parts else Text("No comments.", style="dim")
-        self.query_one("#card-comments", Static).update(comments_text)
+            widgets = [Static(self.comment_body(comment, me_id), id=f"comment-{comment.id}", classes="comment")
+                       for comment in comments]
+            if not widgets:
+                widgets = [Static(Text("No comments.", style="dim"))]
+        await self.show_comment_widgets(widgets, comments is not None)
+        self.comments_shown = comments is not None
+        if self.comments_shown:
+            self.mark_target()
+
+    async def show_comment_widgets(self, widgets: list[Static], real: bool) -> None:
+        """Put the widgets in `#card-comments`. Real comments are matched to the ones shown by id, updated in place,
+        with only the new ones mounted and the gone ones removed, so that a reload (a reaction, a new comment)
+        doesn't collapse the container and move the view. A message (an error, "No comments.") replaces them all."""
+        container = self.query_one("#card-comments", Vertical)
+        if not real:
+            await container.remove_children()
+            await container.mount_all(widgets)
+            return
+        wanted = {w.id for w in widgets}
+        shown = {w.id: w for w in container.children if w.id in wanted}
+        await container.remove_children([w for w in container.children if w.id not in wanted])
+        if not shown:
+            await container.mount_all(widgets)
+            return
+        for index, widget in enumerate(widgets):
+            if current := shown.get(widget.id):
+                current.update(widget.content)
+            else:
+                await container.mount(widget, before=index if index < len(container.children) else None)
+
+    def comment_body(self, comment: Comment, me_id: str) -> Group:
+        when = f"{comment.date:%d %b %H:%M}" if comment.date else ""
+        parts: list[RenderableType] = [
+            Text.assemble(("● ", "magenta"), visual(Text(comment.author, style="bold")), "  ", (when, "dim")),
+            markdown.render(comment.text, clickable=True)]
+        if counts := comment.reaction_counts(me_id):
+            parts.append(Text("  ").join(self.reaction(comment, name, native, n, mine, me_id)
+                                         for name, native, n, mine in counts))
+        parts.append(Text(""))
+        return Group(*parts)
+
+    def show_comment(self, comment_id: str) -> None:
+        """Mark the comment and scroll to it, now if the comments are in, else when they are."""
+        self.target_comment, self.scroll_pending = comment_id, True
+        if self.comments_shown:
+            self.mark_target()
+
+    def mark_target(self) -> None:
+        """Put the mark on the target comment and, the first time, scroll to it; say so if it isn't there."""
+        for widget in self.query(".comment.target"):
+            widget.remove_class("target")
+        if not self.target_comment:
+            return
+        wanted = f"comment-{self.target_comment}"
+        widget = next((w for w in self.query_one("#card-comments").children if w.id == wanted), None)
+        if widget is not None:
+            widget.add_class("target")
+        if not self.scroll_pending or self.sections_loading:
+            return
+        self.scroll_pending = False
+        if widget is None:
+            self.app.notify("That comment isn't on the card any more, or is older than the 50 shown; o opens the "
+                            "card on trello.com", severity="warning")
+        else:
+            self.call_after_refresh(self.scroll_to_widget, widget, top=True, animate=False)
 
     def reaction(self, comment: Comment, name: str, native: str, n: int, mine: bool, me_id: str) -> Text:
         """An emoji under a comment with who gave it, or how many when that's a lot of names."""
