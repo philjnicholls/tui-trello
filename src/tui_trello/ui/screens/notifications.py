@@ -17,7 +17,7 @@ from textual.widgets.option_list import Option
 from tui_trello.backend import BackendError
 from tui_trello.emoji import with_emoji
 from tui_trello.models import Notification
-from tui_trello.ui import markdown, render
+from tui_trello.ui import keymap, markdown, render
 from tui_trello.ui.bidi import fit
 from tui_trello.ui.follow import show_card
 from tui_trello.ui.screens.base import TopBar, reply_to
@@ -43,12 +43,14 @@ class NotificationsScreen(Screen):
     """
 
     BINDINGS = [
-        Binding("l,right", "open", "Open", show=False),
-        Binding("d", "mark_read", "Mark read"),
-        Binding("D", "mark_all_read", "Mark all read"),
-        Binding("u", "toggle_unread", "Show/hide read"),
-        Binding("C", "reply", "Reply"),
+        Binding("l,right", "open", "Open", show=False, id="list.open"),
+        Binding("d", "mark_read", "Mark read", id="notifications.mark_read"),
+        Binding("D", "mark_all_read", "Mark all read", id="notifications.mark_all_read"),
+        Binding("u", "toggle_unread", "Show/hide read", id="notifications.toggle_read"),
+        Binding("C", "reply", "Reply", id="card.reply"),
     ]
+
+    FOCUS_WIDGETS = (OptionList,)
 
     def __init__(self, now: datetime | None = None) -> None:
         super().__init__()
@@ -86,7 +88,8 @@ class NotificationsScreen(Screen):
         options = self.query_one("#notifications", OptionList)
         width = options.scrollable_content_region.width
         options.set_options([Option(self.row(n, now, width), id=n.id) for n in self.shown] or [
-            Option(Text("Nothing unread  (u shows the ones you've read)" if self.unread_only else "No notifications",
+            Option(Text(keymap.of(self.app).fill("Nothing unread  ({notifications.toggle_read} shows the ones you've "
+                                                 "read)") if self.unread_only else "No notifications",
                         style="dim"), disabled=True)])
         ids = [n.id for n in self.shown]
         if current and current.id in ids:
@@ -96,7 +99,8 @@ class NotificationsScreen(Screen):
 
         status = Text.assemble(
             ("Notifications", "bold"), f"  {store.unread_count} unread",
-            ("   read ones hidden (u shows them)", "dim") if self.unread_only else "",
+            (keymap.of(self.app).fill("   read ones hidden ({notifications.toggle_read} shows them)"), "dim")
+            if self.unread_only else "",
         )
         self.query_one("#status", Static).update(status)
 

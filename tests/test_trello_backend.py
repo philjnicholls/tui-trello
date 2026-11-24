@@ -27,6 +27,15 @@ PAYLOADS = {
              {"id": "r1", "idMember": "m1", "idModel": "a1", "idEmoji": "1F44D", "member": {"fullName": "Ada Lovelace"},
               "emoji": {"unified": "1F44D", "native": "👍", "shortName": "+1", "skinVariation": None}}]},
     ],
+    "/1/search": {"cards": [
+        {"id": "c1", "name": "Renew passport", "idList": "l1", "idBoard": "b1", "url": "https://trello.com/c/c1",
+         "board": {"id": "b1", "name": "Home"}, "list": {"id": "l1", "name": "To do"}},
+        {"id": "c7", "name": "Old passport", "idList": "l1", "idBoard": "b1", "closed": True,
+         "board": {"id": "b1", "name": "Home"}, "list": {"id": "l1", "name": "To do"}},
+        {"id": "c8", "name": "In a dead list", "idList": "l9", "idBoard": "b1",
+         "board": {"id": "b1", "name": "Home"}, "list": {"id": "l9", "name": "Old", "closed": True}},
+        {"id": "c9", "name": "On a closed board", "idList": "l8", "idBoard": "b2",
+         "board": {"id": "b2", "name": "Gone", "closed": True}, "list": {"id": "l8", "name": "Done"}}]},
     "/1/actions/a1/reactions": {"id": "r2", "idMember": "m1", "idEmoji": "1F389",
                                 "emoji": {"unified": "1F389", "native": "🎉", "shortName": "tada"}},
     "/1/cards/c1/attachments": [{"id": "at1", "name": "notes.txt", "isUpload": True, "bytes": 5,
@@ -313,3 +322,82 @@ async def test_card_preview_archived(flags: dict, archived: str) -> None:
 async def test_card_preview_404() -> None:
     with pytest.raises(BackendError, match="404"):
         await make_backend([], status=404).card_preview("nope")
+
+
+async def test_archive_card() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    snapshot = await backend.board_snapshot("b1")
+    await backend.archive_card(snapshot.cards[0])
+    assert (requests[-1].method, requests[-1].url.path) == ("PUT", "/1/cards/c1")
+    assert requests[-1].url.params["closed"] == "true"
+
+
+async def test_delete_card() -> None:
+    requests: list[httpx.Request] = []
+    await make_backend(requests).delete_card("c1")
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/1/cards/c1")
+
+
+async def test_edit_comment_sends_the_text_in_the_body() -> None:
+    import json
+
+    requests: list[httpx.Request] = []
+    await make_backend(requests).edit_comment("c1", "a1", "Better words")
+    assert (requests[-1].method, requests[-1].url.path) == ("PUT", "/1/cards/c1/actions/a1/comments")
+    assert json.loads(requests[-1].content) == {"text": "Better words"} and "text" not in requests[-1].url.params
+
+
+async def test_delete_comment() -> None:
+    requests: list[httpx.Request] = []
+    await make_backend(requests).delete_comment("c1", "a1")
+    assert (requests[-1].method, requests[-1].url.path) == ("DELETE", "/1/cards/c1/actions/a1/comments")
+
+
+async def test_search_cards() -> None:
+    requests: list[httpx.Request] = []
+    hits = await make_backend(requests).search_cards("passp")
+    searches = [r for r in requests if r.url.path == "/1/search"]
+    assert [r.url.params["query"] for r in searches] == ["passp", "passp is:archived"]
+    for request in searches:
+        params = request.url.params
+        assert (params["modelTypes"], params["partial"], params["cards_limit"]) == ("cards", "true", "50")
+        assert (params["card_board"], params["card_list"], params["card_fields"]) == ("true", "true", CARD_FIELDS)
+    # both requests got the same payload: the cards are merged, not repeated
+    assert [h.card.id for h in hits] == ["c1", "c7", "c8", "c9"]
+    assert [(h.location, h.archived) for h in hits] == [
+        ("Home › To do", ""), ("Home › To do", "card"), ("Home › Old", "list"), ("Gone › Done", "board")]
+
+
+async def test_search_cards_lists_open_before_archived() -> None:
+    cards = PAYLOADS["/1/search"]["cards"]
+    archived = [c for c in cards if c.get("closed")]
+    open_ = [c for c in cards if not c.get("closed") and not (c.get("list") or {}).get("closed")
+             and not (c.get("board") or {}).get("closed")]
+    assert archived and open_
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        found = open_ if "is:archived" in request.url.params["query"] else archived  # the archived come first
+        return httpx.Response(200, json={"cards": found})
+
+    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    hits = await backend.search_cards("passp")
+    assert [bool(h.archived) for h in hits] == [False] * len(open_) + [True] * len(archived)
+
+
+async def test_search_cards_survives_one_failing_request() -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if "is:archived" in request.url.params["query"]:
+            return httpx.Response(500, json={})
+        return httpx.Response(200, json=PAYLOADS["/1/search"])
+
+    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    assert await backend.search_cards("passp")
+
+
+async def test_search_cards_fails_when_both_requests_do() -> None:
+    with pytest.raises(BackendError):
+        await make_backend([], status=500).search_cards("passp")

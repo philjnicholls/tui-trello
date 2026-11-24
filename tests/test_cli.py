@@ -68,12 +68,12 @@ def test_open_and_board_together_is_an_error(started, capsys) -> None:
     assert started == []
 
 
-@pytest.mark.parametrize("command", ["login", "logout"])
+@pytest.mark.parametrize("command", ["login", "logout", "keys"])
 def test_open_with_login_is_an_error(command, started, capsys) -> None:
     with pytest.raises(SystemExit) as exit_:
         cli.main(["--open", CARD_URL, command])
     assert exit_.value.code == 2
-    assert "--open can't be used with login or logout" in capsys.readouterr().err
+    assert "--open can't be used with login, logout or keys" in capsys.readouterr().err
 
 
 def test_open_passes_the_url_to_the_app(started) -> None:
@@ -98,3 +98,49 @@ def test_open_accepts_each_kind(kind, started) -> None:
 def test_open_with_real_trello_uses_trello_hosts(started, logins) -> None:
     cli.main(["--open", "https://trello.com/c/nVTbsQMq/5741-x"])
     assert len(logins) == 1 and started[0].open_url.endswith("5741-x")
+
+
+def write_config(tmp_path, text: str) -> None:
+    path = tmp_path / "config" / "tui-trello" / "config.toml"
+    path.parent.mkdir(parents=True)
+    path.write_text(text)
+
+
+def test_keys_lists_every_id(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["keys"])
+    assert exit_.value.code == 0
+    out = capsys.readouterr().out
+    assert out.startswith("[keys]\n") and "# card:" in out and "# app:" in out
+    assert 'card.archive = "A"' in out and 'app.search = "/"' in out and 'chord.next_view = "g t"' in out
+    assert "(default:" not in out
+
+
+def test_keys_reports_problems(tmp_path, capsys) -> None:
+    write_config(tmp_path, '[keys]\ncard.archive = "m"\ncard.delete = "ctrl+x"\n')
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["keys"])
+    assert exit_.value.code == 1
+    captured = capsys.readouterr()
+    assert "card.archive = \"m\": m already does" in captured.err and "(card.move)" in captured.err
+    assert 'card.archive = "A"' in captured.out  # dropped: the default stays
+    assert 'card.delete = "ctrl+x"' in captured.out and "(default: D)" in captured.out
+
+
+def test_keys_marks_an_override_and_exits_clean(tmp_path, capsys) -> None:
+    write_config(tmp_path, '[keys]\ncard.archive = "ctrl+a"\n')
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["keys"])
+    assert exit_.value.code == 0
+    captured = capsys.readouterr()
+    assert 'card.archive = "ctrl+a"' in captured.out and "(default: A)" in captured.out and captured.err == ""
+
+
+def test_keys_output_is_a_valid_config(tmp_path, capsys) -> None:
+    """What the command prints can be pasted back as `[keys]` without a single warning."""
+    with pytest.raises(SystemExit):
+        cli.main(["keys"])
+    write_config(tmp_path, capsys.readouterr().out)
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["keys"])
+    assert exit_.value.code == 0 and capsys.readouterr().err == ""

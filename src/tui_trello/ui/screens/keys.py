@@ -10,79 +10,99 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from tui_trello.ui import keymap
+
 # Where a section or a key applies: the `HELP_PLACE` of the screens it works on; None for everywhere.
 LISTS = {"browser", "triage", "mywork"}
 CARDS = LISTS | {"card"}
 PLACE_NAMES = {"browser": "the browser", "triage": "triage", "mywork": "my work", "notifications": "notifications",
                "card": "a card", "preview": "a link preview"}
 
-# (section, where, keys); a key is (keys, what they do) or (keys, what they do, where).
+# (section, where, keys); a key is (keys, what they do) or (keys, what they do, where). Keys are written as `{id}`
+# placeholders, which `KeysScreen.table` fills with the key in use (see ui/keymap.py).
 KEYS = [
     ("Move", None, [
-        ("j k", "down, up"),
-        ("h l", "back to the lists, into the cards; l on a card opens it", {"browser"}),
-        ("l / enter", "open the card", {"triage", "mywork"}),
-        ("h / esc / q", "back", {"card"}),
-        ("gg G", "first, last"),
-        ("ctrl+d ctrl+u", "half a page down, up"),
+        ("{app.down} {app.up}", "down, up"),
+        ("{browser.out} {browser.in}", "back to the lists, into the cards; {browser.in} on a card opens it",
+         {"browser"}),
+        ("{list.open} / enter", "open the card", {"triage", "mywork"}),
+        ("{card_screen.back:all}", "back", {"card"}),
+        ("{chord.top} {app.bottom}", "first, last"),
+        ("{app.half_down} {app.half_up}", "half a page down, up"),
     ]),
     ("Views", CARDS | {"notifications"}, [  # off under a link preview
-        ("1 2 3 4", "browser, triage, my work, notifications"),
-        ("gt gT", "next, previous view"),
-        ("b", "pick a board"),
-        (":", "command palette: jump to any board or card"),
-        ("/", "filter: words  #label  @member  list:name  !overdue  !due  (esc clears)", LISTS),
-        ("s", "cycle sort: list, due date, last activity", {"triage"}),
-        ("p", "show or hide the preview", {"mywork"}),
-        ("r", "reload"),
+        ("{app.browser} {app.triage} {app.mywork} {app.notifications}", "browser, triage, my work, notifications"),
+        ("{chord.next_view} {chord.previous_view}", "next, previous view"),
+        ("{app.boards}", "pick a board"),
+        ("{app.commands}", "command palette: jump to any board or card"),
+        ("{app.search}", "search every board on Trello, archived cards too; enter opens, {popup.preview} previews"),
+        ("{list.filter}", "filter the cards on screen: words  #label  @member  list:name  !overdue  !due  "
+                          "({list.clear_filter} clears)", LISTS),
+        ("{triage.sort}", "cycle sort: list, due date, last activity", {"triage"}),
+        ("{mywork.preview}", "show or hide the preview", {"mywork"}),
+        ("{app.refresh}", "reload"),
     ]),
     ("Cards", CARDS, [
-        ("n", "new card: on the highlighted list (in triage and my work, pick the list first); the first line is its "
-              "name, the lines after it its description", LISTS),
-        ("m", "move to another list"),
-        ("c", "comment: enter sends, alt+enter new line, @ mentions someone (tab or enter picks)"),
-        ("", "in a comment or description, ctrl+o attaches a file and puts its link in"),
-        ("e", "edit the description: enter new line, ctrl+s saves"),
-        ("", "esc closes either and keeps what you wrote as a draft; empty the box to drop it"),
-        ("t", "labels: enter puts one on or takes it off; type a new name to create one"),
-        ("x", "checklist: enter ticks or unticks an item; type new text to add an item or a checklist"),
-        ("X", "show or hide the ticked items of every checklist (hidden at first; remembered)",
+        ("{list.new_card}", "new card: on the highlighted list (in triage and my work, pick the list first); the "
+                            "first line is its name, the lines after it its description", LISTS),
+        ("{card.move}", "move to another list"),
+        ("{card.comment}", "comment: {editor.enter} sends, {editor.newline} new line, @ mentions someone "
+                           "({editor.mention} or {editor.enter} picks)"),
+        ("", "in a comment or description, {editor.attach} attaches a file and puts its link in"),
+        ("{card.description}", "edit the description: {editor.enter} new line, {editor.save} saves"),
+        ("", "{editor.cancel} closes either and keeps what you wrote as a draft; empty the box to drop it"),
+        ("{card.labels}", "labels: enter puts one on or takes it off; type a new name to create one"),
+        ("{card.checklist}", "checklist: enter ticks or unticks an item; type new text to add an item or a "
+                             "checklist"),
+        ("{app.done_items}", "show or hide the ticked items of every checklist (hidden at first; remembered)",
          {"browser", "mywork", "card"}),
-        ("a", "attachments: enter opens one in the browser, ctrl+s saves it to Downloads, ctrl+y copies its link; "
-              "attach a file, or paste a URL to attach a link"),
-        ("C", "reply to a comment: it starts with a quote of it and @mentions its author; for a long one, pick what "
-              "to quote"),
-        ("R", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),
-        ("y Y", "copy the link to the card, to one of its comments"),
-        ("o", "open in the web browser"),
-        ("L", ("follow a link on the card: Trello cards, comments, boards and attachments open here, the rest in the "
-               "web browser; alt+p in the list previews a card, comment or attachment in a popup (esc comes back), "
-               "ctrl+o opens one in the browser, ctrl+y copies it")),
+        ("{card.attachments}", "attachments: enter opens one in the browser, {attachments.save} saves it to "
+                               "Downloads, {popup.copy_link} copies its link; attach a file, or paste a URL to "
+                               "attach a link"),
+        ("{card.reply}", "reply to a comment: it starts with a quote of it and @mentions its author; for a long "
+                         "one, pick what to quote"),
+        ("{card.react}", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),
+        ("{card.edit_comment}", "edit one of your comments: pick it, change the text, save"),
+        ("{card.delete_comment}", "delete one of your comments (asks first)"),
+        ("{card.archive}", "archive the card (asks first); {app.search} still finds it, and trello.com can "
+                           "restore it"),
+        ("{card.delete}", "delete the card for good (asks first)"),
+        ("{card.copy_link} {card.copy_comment_link}", "copy the link to the card, to one of its comments"),
+        ("{card.open}", "open in the web browser"),
+        ("{card.follow_link}", ("follow a link on the card: Trello cards, comments, boards and attachments open "
+                                "here, the rest in the web browser; {popup.preview} in the list previews a card, "
+                                "comment or attachment in a popup (esc comes back), {popup.open_in_browser} opens "
+                                "one in the browser, {popup.copy_link} copies it")),
         ("click", "on a link: a card, comment or attachment opens its preview; enter there follows it; a board or "
                   "web link is followed", CARDS),
-        ("y o", "on the lists column, copy or open the board's link (a list has no link of its own)", {"browser"}),
-        ("B", "copy the link to the board", {"browser", "triage"}),
+        ("{card.copy_link} {card.open}", "on the lists column, copy or open the board's link (a list has no link "
+                                         "of its own)", {"browser"}),
+        ("{board.copy_link}", "copy the link to the board", {"browser", "triage"}),
     ]),
     ("Notifications", {"notifications"}, [
-        ("enter / l", "open the card and mark its notifications read"),
-        ("d", "mark read"),
-        ("D", "mark all read"),
-        ("u", "hide / show the ones you've read (hidden at first; remembered)"),
-        ("C", "reply to the comment: it starts with a quote of it and @mentions its author"),
+        ("enter / {list.open}", "open the card and mark its notifications read"),
+        ("{notifications.mark_read}", "mark read"),
+        ("{notifications.mark_all_read}", "mark all read"),
+        ("{notifications.toggle_read}", "hide / show the ones you've read (hidden at first; remembered)"),
+        ("{card.reply}", "reply to the comment: it starts with a quote of it and @mentions its author"),
     ]),
     ("Link preview", {"preview"}, [
-        ("esc q", "close it: everything under it is as it was"),
-        ("enter", "follow the link"),
-        ("ctrl+o ctrl+y", "open the link in the web browser, copy it"),
-        ("X", "show or hide the ticked items of every checklist"),
-        ("j k", "scroll; a click on a link in it previews that on top"),
+        ("{preview.close:all}", "close it: everything under it is as it was"),
+        ("{preview.follow}", "follow the link"),
+        ("{popup.open_in_browser} {popup.copy_link}", "open the link in the web browser, copy it"),
+        ("{app.done_items}", "show or hide the ticked items of every checklist"),
+        ("{app.down} {app.up}", "scroll; a click on a link in it previews that on top"),
     ]),
     ("Pickers", CARDS | {"notifications"}, [  # where pickers open; none do under a link preview
         ("type", "filter"),
-        ("ctrl+j ctrl+k", "down, up"),
-        ("enter esc", "choose, cancel"),
+        ("{picker.down} {picker.up}", "down, up"),
+        ("enter {picker.close}", "choose, cancel"),
     ]),
-    ("", None, [("?", "close this"), ("q", "quit (back, on a card)", CARDS | {"notifications"})]),
+    ("", None, [
+        ("{app.help}", "close this"),
+        ("{app.quit}", "quit (back, on a card)", CARDS | {"notifications"}),
+        ("", "change any key in config.toml's [keys]: `tui-trello keys` lists them"),
+    ]),
 ]
 
 
@@ -108,8 +128,9 @@ class KeysScreen(ModalScreen[None]):
     """
 
     BINDINGS = [
-        Binding("escape,question_mark,q", "dismiss", "Close"),
-        Binding("a", "toggle_all", "All keys"),
+        Binding("escape,q", "dismiss", "Close", id="help.close"),
+        Binding("question_mark", "dismiss", "Close", show=False, id="app.help"),
+        Binding("a", "toggle_all", "All keys", id="help.all"),
     ]
 
     def __init__(self, place: str | None = None) -> None:
@@ -123,19 +144,20 @@ class KeysScreen(ModalScreen[None]):
             yield Static(self.table(), id="keys")
 
     def table(self) -> Table:
+        keys_in_use = keymap.of(self.app)
         table = Table.grid(padding=(0, 2))
         table.add_column(justify="right", no_wrap=True)
         table.add_column()
         if self.place:
             heading = "Every key" if self.show_all else f"Keys in {PLACE_NAMES.get(self.place, self.place)}"
-            other = "a: just this view's" if self.show_all else "a: every key"
+            other = keys_in_use.fill("{help.all}: just this view's" if self.show_all else "{help.all}: every key")
             table.add_row("", Text.assemble((heading, "bold"), ("   " + other, "dim")))
             table.add_row("", "")
         for section, keys in keys_for(None if self.show_all else self.place):
             if section:
                 table.add_row("", Text(section.upper(), style="bold"))
             for key, does in keys:
-                table.add_row(Text(key, style="bold yellow"), does)
+                table.add_row(Text(keys_in_use.fill(key), style="bold yellow"), Text(keys_in_use.fill(does)))
             table.add_row("", "")
         return table
 

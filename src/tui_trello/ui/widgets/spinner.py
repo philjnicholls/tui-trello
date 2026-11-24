@@ -9,7 +9,7 @@ FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 LABELS = {"board": "loading board", "work": "loading your cards", "boards": "loading boards",
           "comments": "loading comments", "checklists": "loading checklists", "labels": "loading labels",
           "members": "loading members", "preview": "loading the preview", "notifications": "checking notifications",
-          "save": "saving"}
+          "save": "saving", "search": "searching"}
 
 
 class Spinner(Static):

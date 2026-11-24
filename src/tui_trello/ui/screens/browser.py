@@ -14,7 +14,7 @@ from textual.widgets.option_list import Option
 
 from tui_trello.emoji import with_emoji
 from tui_trello.models import Card, CardList
-from tui_trello.ui import render
+from tui_trello.ui import keymap, render
 from tui_trello.ui.bidi import visual
 from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar, index_of
 from tui_trello.ui.widgets.bell import Bell
@@ -39,9 +39,11 @@ class BrowserScreen(BoardScreen):
     """
 
     BINDINGS = [
-        Binding("l,right", "drill", "In", show=False),
-        Binding("h,left", "back_out", "Out", show=False),
+        Binding("l,right", "drill", "In", show=False, id="browser.in"),
+        Binding("h,left", "back_out", "Out", show=False, id="browser.out"),
     ]
+
+    FOCUS_WIDGETS = (OptionList, CardView)
 
     def __init__(self) -> None:
         super().__init__()
@@ -54,7 +56,7 @@ class BrowserScreen(BoardScreen):
             yield Static(id="crumbs")
             yield Bell()
             yield Spinner()
-        yield Input(id="filter", placeholder=FILTER_HELP)
+        yield Input(id="filter", placeholder=keymap.of(self.app).fill(FILTER_HELP))
         with Horizontal(id="body"):
             yield OptionList(id="lists")
             yield OptionList(id="cards")
@@ -99,16 +101,23 @@ class BrowserScreen(BoardScreen):
         if not (snapshot := self.snapshot):
             return
         option = self.query_one("#lists", OptionList).highlighted_option
+        # The cursor keeps its row only when a card leaves the list, not when the filter changes or the list does.
+        same_list = bool(option) and option.id == self.list_id and self.query_text == self._shown_query
+        self._shown_query = self.query_text
         self.list_id = option.id if option else None
         previous = self.current_card()
+        cards = self.query_one("#cards", OptionList)
+        row = cards.highlighted or 0
         self.cards = self.matching(self.list_id) if self.list_id else []
         unread = self.app.store.unread_by_card()
-        cards = self.query_one("#cards", OptionList)
         cards.set_options(Option(render.card_block(card, snapshot, unread=unread[card.id]), id=card.id)
                           for card in self.cards)
         if self.cards:
             ids = [c.id for c in self.cards]
-            cards.highlighted = ids.index(previous.id) if previous and previous.id in ids else 0
+            if previous and previous.id in ids:
+                cards.highlighted = ids.index(previous.id)
+            else:  # in the same list, the card is gone (archived, moved): the cursor stays, on the card that followed
+                cards.highlighted = min(row, len(ids) - 1) if previous and same_list else 0
         self.update_crumbs()
         self.query_one(CardView).show(self.current_card(), snapshot)
 

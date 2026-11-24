@@ -19,20 +19,23 @@ def main(argv: list[str] | None = None) -> None:
                        help="open this Trello board, card, comment or attachment link at start-up "
                             "(quote it: 'https://trello.com/c/...#comment-...')")
     parser.add_argument("--layout", choices=LAYOUTS, help="screen to start on")
-    commands = parser.add_subparsers(dest="command", metavar="{login,logout}")
+    commands = parser.add_subparsers(dest="command", metavar="{login,logout,keys}")
     login_parser = commands.add_parser("login", help="authorise tui-trello in the browser and save the token")
     login_parser.add_argument("--token", action="store_true",
                               help="use Trello's older flow: paste a long-lived token for the app's API key")
     commands.add_parser("logout", help="forget the saved token")
+    commands.add_parser("keys", help="list every key action and its key, and check [keys] in config.toml")
     args = parser.parse_args(argv)
     if args.open is not None and args.command:
-        parser.error("--open can't be used with login or logout")
+        parser.error("--open can't be used with login, logout or keys")
 
     settings = Settings.load()
     if args.command == "login":
         sys.exit(cmd_login(settings, token=args.token))
     if args.command == "logout":
         sys.exit(cmd_logout())
+    if args.command == "keys":
+        sys.exit(cmd_keys(settings))
 
     if args.board:
         settings.default_board = args.board
@@ -124,6 +127,19 @@ def cmd_login(settings: Settings, token: bool = False) -> int:
         return 130
     print(f"Logged in as {name}.")
     return 0
+
+
+def cmd_keys(settings: Settings) -> int:
+    """Print every key id with the key in use, as a `[keys]` table to copy from; the problems with `[keys]` go to
+    stderr, and the status is 1 if there are any."""
+    from tui_trello.ui.keymap import KeyMap
+
+    keymap = KeyMap.build(settings.keys)
+    print(keymap.listing(), end="")
+    problems = settings.warnings + keymap.warnings
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return 1 if problems else 0
 
 
 def cmd_logout() -> int:

@@ -72,3 +72,12 @@ def test_reaction_notification_from_api() -> None:
                       {"id": "r2", "idMember": "m3", "emoji": {**emoji, "native": "👍", "shortName": "+1"}}],
     })
     assert (n.reactions, n.creator_username, n.is_comment) == (("🙏",), "grace", False)
+
+
+def test_comment_author_id() -> None:
+    comment = Comment.from_api({"id": "a1", "data": {"text": "hi"}, "idMemberCreator": "m1",
+                                "memberCreator": {"id": "m9", "fullName": "Ada Lovelace"}})
+    assert comment.author_id == "m1"
+    nested = Comment.from_api({"id": "a2", "data": {"text": "hi"}, "memberCreator": {"id": "m9", "fullName": "Ada"}})
+    assert nested.author_id == "m9"
+    assert Comment.from_api({"id": "a3", "data": {"text": "hi"}}).author_id == ""

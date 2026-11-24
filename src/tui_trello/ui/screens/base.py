@@ -1,10 +1,10 @@
 """Behaviour shared by the screens.
 
 - :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist,
-  attachments, reply or react to a comment, copy a link, open in browser). A new card feature
-  (archive, assign, label, due date, ...) is added here once, as a binding plus an action, and works in every view.
-  Subclasses only say which card is current.
-- :class:`ListScreen`: a card list with a `/` filter bar using the query language in `tui_trello.query`, and `n`
+  attachments, reply or react to a comment, edit or delete your comment, archive or delete the card, copy a link,
+  open in browser). A new card feature (assign, due date, ...) is added here once, as a binding plus an action, and
+  works in every view. Subclasses only say which card is current.
+- :class:`ListScreen`: a card list with an `f` filter bar using the query language in `tui_trello.query`, and `n`
   to make a new card: subclasses say which list it goes on and put the cursor on it once made.
 - :class:`BoardScreen`: a list screen drawing the open board, redrawn whenever the store says it changed.
 
@@ -34,12 +34,13 @@ from tui_trello.emoji import with_emoji
 from tui_trello.models import REACTIONS, BoardSnapshot, Card, CardList, Comment
 from tui_trello.query import CardQuery
 from tui_trello.store import NewCardDraft
-from tui_trello.ui import clipboard, markdown
+from tui_trello.ui import clipboard, keymap, markdown
 from tui_trello.ui.bidi import cut
 from tui_trello.ui.screens.picker import (
     AttachmentPickerScreen,
     ChecklistPickerScreen,
     Choice,
+    ConfirmScreen,
     LabelPickerScreen,
     LinkPickerScreen,
     PickerScreen,
@@ -59,24 +60,30 @@ class TopBar(Horizontal):
 
 
 COMMENT_LABEL = 60  # terminal cells of a comment, or of a part of one, shown (and matched) in a picker
-FILTER_HELP = "words  #label  @member  list:name  !overdue  !due    enter: apply   esc: clear"
+FILTER_HELP = "words  #label  @member  list:name  !overdue  !due    enter: apply   {list.clear_filter}: clear"
 
 
 class CardActionsScreen(Screen):
     BINDINGS = [
-        Binding("m", "move_card", "Move"),
-        Binding("c", "comment", "Comment"),
-        Binding("e", "edit_description", "Description"),
-        Binding("t", "labels", "Labels"),
-        Binding("x", "checklist", "Checklist"),
-        Binding("a", "attachments", "Attachments", show=False),
-        Binding("C", "reply", "Reply", show=False),
-        Binding("R", "react", "React", show=False),
-        Binding("y", "copy_link", "Copy link", show=False),
-        Binding("Y", "copy_comment_link", "Copy comment link", show=False),
-        Binding("o", "open_in_browser", "Open in browser", show=False),
-        Binding("L", "follow_link", "Follow link", show=False),
+        Binding("m", "move_card", "Move", id="card.move"),
+        Binding("c", "comment", "Comment", id="card.comment"),
+        Binding("e", "edit_description", "Description", id="card.description"),
+        Binding("t", "labels", "Labels", id="card.labels"),
+        Binding("x", "checklist", "Checklist", id="card.checklist"),
+        Binding("a", "attachments", "Attachments", show=False, id="card.attachments"),
+        Binding("C", "reply", "Reply", show=False, id="card.reply"),
+        Binding("R", "react", "React", show=False, id="card.react"),
+        Binding("y", "copy_link", "Copy link", show=False, id="card.copy_link"),
+        Binding("Y", "copy_comment_link", "Copy comment link", show=False, id="card.copy_comment_link"),
+        Binding("o", "open_in_browser", "Open in browser", show=False, id="card.open"),
+        Binding("L", "follow_link", "Follow link", show=False, id="card.follow_link"),
+        Binding("A", "archive_card", "Archive", show=False, id="card.archive"),
+        Binding("D", "delete_card", "Delete", show=False, id="card.delete"),
+        Binding("E", "edit_comment", "Edit comment", show=False, id="card.edit_comment"),
+        Binding("d", "delete_comment", "Delete comment", show=False, id="card.delete_comment"),
     ]
+
+    FOCUS_WIDGETS: tuple[type, ...] = ()  # the widgets that hold the focus, whose own keys can't be changed
 
     def current_card(self) -> Card | None:
         raise NotImplementedError
@@ -141,7 +148,8 @@ class CardActionsScreen(Screen):
         try:
             await store.set_description(current, desc)
         except BackendError as exc:
-            self.notify(f"{exc} The edit is kept as a draft: e to try again.", severity="error")
+            self.notify(f"{exc} " + keymap.of(self.app).fill("The edit is kept as a draft: {card.description} to try "
+                                                             "again."), severity="error")
         else:
             store.save_draft("desc", card.id, "")
             self.notify("Description saved")
@@ -158,8 +166,8 @@ class CardActionsScreen(Screen):
         if card := self.current_card():
             self.app.push_screen(ChecklistPickerScreen(card.id))
 
-    async def pick_comment(self, card: Card, title: str) -> Comment | None:
-        """Choose one of the card's comments, newest first."""
+    async def pick_comment(self, card: Card, title: str, mine: bool = False) -> Comment | None:
+        """Choose one of the card's comments, newest first; with `mine`, one of the member's own."""
         store = self.app.store
         try:
             comments = await store.comments(card.id)
@@ -167,8 +175,10 @@ class CardActionsScreen(Screen):
         except BackendError as exc:
             self.notify(str(exc), severity="error")
             return None
+        if mine:
+            comments = [comment for comment in comments if comment.author_id == me_id]
         if not comments:
-            self.notify("No comments on this card")
+            self.notify("You have no comments on this card" if mine else "No comments on this card")
             return None
         choices = []
         for comment in comments:
@@ -179,6 +189,79 @@ class CardActionsScreen(Screen):
                                   "  ".join(part for part in (when, reactions) if part),
                                   search=f"{comment.author}: {search}"))
         return await self.app.push_screen_wait(PickerScreen(title, choices))
+
+    @work
+    async def action_archive_card(self) -> None:
+        card = self.current_card()
+        if not card:
+            return
+        name = with_emoji(card.name)
+        message = keymap.of(self.app).fill("It leaves the board. {app.search} still finds it, and trello.com can "
+                                           "restore it.")
+        if not await self.app.push_screen_wait(ConfirmScreen(f"Archive “{name}”?", message, "archive")):
+            return
+        try:
+            await self.app.store.archive_card(card)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error", markup=False)
+            return
+        self.notify(f"Archived “{name}”", markup=False)
+        self.card_gone(card)
+
+    @work
+    async def action_delete_card(self) -> None:
+        card = self.current_card()
+        if not card:
+            return
+        name = with_emoji(card.name)
+        message = keymap.of(self.app).fill("This can't be undone, here or on trello.com. {card.archive} archives it "
+                                           "instead.")
+        if not await self.app.push_screen_wait(ConfirmScreen(f"Delete “{name}” for good?", message, "delete")):
+            return
+        try:
+            await self.app.store.delete_card(card)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error", markup=False)
+            return
+        self.notify(f"Deleted “{name}”", markup=False)
+        self.card_gone(card)
+
+    def card_gone(self, card: Card) -> None:
+        """Called once the card has been archived or deleted. A screen showing only that card closes itself."""
+
+    @work
+    async def action_edit_comment(self) -> None:
+        card = self.current_card()
+        if not card or not (comment := await self.pick_comment(card, "Edit which comment?", mine=True)):
+            return
+        store = self.app.store
+        text = await self.app.push_screen_wait(TextPromptScreen(
+            f"Edit your comment on “{with_emoji(card.name)}”", mentions=lambda: store.members(card.board_id),
+            text=comment.text, hint="{card.delete_comment} deletes a comment",
+            attach=lambda path: attach_for_text(self, card.id, path)))
+        if text is None or text == comment.text.strip():
+            return
+        try:
+            await store.edit_comment(card.id, comment, text)
+        except BackendError as exc:
+            self.notify(f"{exc} Your edit was not saved.", severity="error", markup=False)
+        else:
+            self.notify("Comment saved")
+
+    @work
+    async def action_delete_comment(self) -> None:
+        card = self.current_card()
+        if not card or not (comment := await self.pick_comment(card, "Delete which comment?", mine=True)):
+            return
+        if not await self.app.push_screen_wait(ConfirmScreen("Delete your comment?", label_and_search(comment.text)[0],
+                                                             "delete")):
+            return
+        try:
+            await self.app.store.delete_comment(card.id, comment)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error", markup=False)
+        else:
+            self.notify("Comment deleted")
 
     @work
     async def action_reply(self) -> None:
@@ -277,7 +360,8 @@ async def write_comment(screen: Screen, card_id: str, board_id: str, title: str,
     try:
         await store.add_comment(card_id, text)
     except BackendError as exc:
-        screen.notify(f"{exc} The comment is kept as a draft: c to try again.", severity="error")
+        screen.notify(f"{exc} " + keymap.of(screen.app).fill("The comment is kept as a draft: {card.comment} to try "
+                                                             "again."), severity="error")
     else:
         store.save_draft("comment", card_id, "")
         screen.notify("Comment added")
@@ -337,8 +421,9 @@ class ListScreen(CardActionsScreen):
     """
 
     BINDINGS = [
-        Binding("slash", "filter", "Filter"),
-        Binding("n", "new_card", "New card"),
+        Binding("f", "filter", "Filter", id="list.filter"),
+        Binding("escape", "clear_filter", "Clear filter", show=False, id="list.clear_filter"),
+        Binding("n", "new_card", "New card", id="list.new_card"),
     ]
 
     def __init__(self) -> None:
@@ -415,10 +500,12 @@ class ListScreen(CardActionsScreen):
             card = await store.create_card(card_list, name, desc, draft=box.id)
         except BackendError as exc:
             if exc.unsure:
-                self.notify(f"{exc} The card may have been made on Trello anyway: check before sending it again (n).",
-                            severity="error")
+                self.notify(f"{exc} " + keymap.of(self.app).fill(
+                    "The card may have been made on Trello anyway: check before sending it again ({list.new_card})."),
+                    severity="error")
             else:
-                self.notify(f"{exc} The card is kept as a draft: n to try again.", severity="error")
+                self.notify(f"{exc} " + keymap.of(self.app).fill("The card is kept as a draft: {list.new_card} to try "
+                                                                 "again."), severity="error")
             return
         here = self.place() == place
         # The screens subscribe to the store's signals without `immediate`, so publishing queued this screen's
@@ -446,7 +533,7 @@ class ListScreen(CardActionsScreen):
             self.query_one("#filter", Input).remove_class("visible")
         self.focus_list()
 
-    def key_escape(self) -> None:
+    def action_clear_filter(self) -> None:
         """Esc clears the filter, from the filter bar or from the list."""
         box = self.query_one("#filter", Input)
         if box.value or box.has_focus:
@@ -459,9 +546,8 @@ class BoardScreen(ListScreen):
     """A list screen showing the open board."""
 
     BINDINGS = [
-        Binding("B", "copy_board_link", "Copy board link", show=False),
+        Binding("B", "copy_board_link", "Copy board link", show=False, id="board.copy_link"),
     ]
-
 
     def on_mount(self) -> None:
         self.app.store.board_changed.subscribe(self, lambda _: self.redraw())
@@ -477,13 +563,14 @@ class BoardScreen(ListScreen):
         toast = super().new_card_toast(card, card_list)
         snapshot = self.snapshot
         if snapshot and snapshot.board.id == card.board_id and not self.card_query.matches(card, snapshot):
-            toast += " (hidden by the filter; esc clears it)"  # only on the board on screen
+            toast += keymap.of(self.app).fill(" (hidden by the filter; {list.clear_filter} clears it)")
+            # only on the board on screen
         return toast
 
     def board_lists(self) -> list[CardList]:
         """The open board's lists, for a new card; none, having said why, if no board is open or it has none."""
         if not self.snapshot:
-            self.notify("Open a board first (b)")
+            self.notify(keymap.of(self.app).fill("Open a board first ({app.boards})"))
             return []
         if not self.snapshot.lists:
             self.notify("This board has no lists")

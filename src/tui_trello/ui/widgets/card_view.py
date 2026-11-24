@@ -24,7 +24,7 @@ from tui_trello.models import (
     Checklist,
     Comment,
 )
-from tui_trello.ui import markdown, render
+from tui_trello.ui import keymap, markdown, render
 from tui_trello.ui.bidi import BidiText, visual
 from tui_trello.ui.screens.picker import attachment_hint, attachment_marker
 from tui_trello.ui.tips import TIPS
@@ -49,11 +49,12 @@ class CardView(VerticalScroll):
     CardView.empty #card-tip { display: block; }
     """
 
-    KEY_HINTS = True  # name the keys that act on the card (x, a, c, e) in its hints; a read-only view names none
+    KEY_HINTS = True  # name the keys that act on the card (checklist, attachments, comment, ...) in its hints; a
+    # read-only view names none
     TIP_SECONDS = 15
     REACTORS_SHOWN = 3  # names under a comment's emoji; more than this shows a count
-    MISSING_COMMENT = ("That comment isn't on the card any more, or is older than the 50 shown; o opens the card on "
-                       "trello.com")
+    MISSING_COMMENT = ("That comment isn't on the card any more, or is older than the 50 shown; {card.open} opens the "
+                       "card on trello.com")  # with {id} placeholders for keys
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id, classes="empty")
@@ -105,7 +106,7 @@ class CardView(VerticalScroll):
         self.query_one("#card-tip", Static).update(Group(
             Text("No card here yet.", style="dim"), Text(""),
             Text.assemble(("💡 Tip", "bold"), (f"  {self.tip + 1}/{len(TIPS)}", "dim")),
-            markdown.inline(TIPS[self.tip]),
+            markdown.inline(keymap.of(self.app).fill(TIPS[self.tip])),
         ))
 
     def next_tip(self) -> None:
@@ -154,9 +155,11 @@ class CardView(VerticalScroll):
             meta.append_text(Text.assemble(("👤 ", "dim"), Text(", ", style="cyan").join(
                 visual(Text(name, style="cyan")) for name in names), "\n"))
         meta.append_text(render.label_chips(card.labels))
-        drafts = {"comment": ("c: ", "unsent comment"), "desc": ("e: ", "unsaved description")}
+        drafts = {"comment": ("{card.comment}: ", "unsent comment"), "desc": ("{card.description}: ",
+                                                                              "unsaved description")}
         for kind in self.app.store.drafts.kinds(card.id):
             key, what = drafts[kind]
+            key = keymap.of(self.app).fill(key)
             meta.append_text(Text.assemble("\n", ("✐ draft", "bold yellow"),
                                            (f"  {key if self.KEY_HINTS else ''}{what}", "yellow")))
         self.query_one("#card-meta", Static).update(meta)
@@ -182,10 +185,10 @@ class CardView(VerticalScroll):
             parts.append(Text(""))
         hints = []
         if any(checklist.done for checklist in checklists):
-            hints.append(f"X: {'hide' if shown else 'show'} done items")
+            hints.append(f"{{app.done_items}}: {'hide' if shown else 'show'} done items")
         if self.KEY_HINTS:
-            hints.append("x: tick or add")
-        hint = "   ".join(hints)
+            hints.append("{card.checklist}: tick or add")
+        hint = keymap.of(self.app).fill("   ".join(hints))
         parts[-1:] = [Text(hint, style="dim")] if checklists and hint else []
         self.query_one("#card-checklists", Static).update(Group(*parts))
 
@@ -205,7 +208,7 @@ class CardView(VerticalScroll):
         rows = [Text.assemble(attachment_marker(a), visual(with_emoji(a.name)), ("  " + attachment_hint(a), "dim"))
                 for a in attachments]
         if rows and self.KEY_HINTS:
-            rows.append(Text("a: open, save or add", style="dim"))
+            rows.append(Text(keymap.of(self.app).fill("{card.attachments}: open, save or add"), style="dim"))
         self.query_one("#card-attachments", Static).update(Group(*rows))
 
     @work(exclusive=True, group="attachments")
@@ -310,7 +313,7 @@ class CardView(VerticalScroll):
             self.mark_target()
 
     def say_comment_missing(self) -> None:
-        self.app.notify(self.MISSING_COMMENT, severity="warning")
+        self.app.notify(keymap.of(self.app).fill(self.MISSING_COMMENT), severity="warning")
 
     def mark_target(self) -> None:
         """Put the mark on the target comment and, the first time, scroll to it; say so if it isn't there."""

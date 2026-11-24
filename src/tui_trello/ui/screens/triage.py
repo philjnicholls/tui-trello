@@ -12,7 +12,7 @@ from textual.widgets import DataTable, Footer, Input, Static
 
 from tui_trello.emoji import with_emoji
 from tui_trello.models import Card, CardList
-from tui_trello.ui import render
+from tui_trello.ui import keymap, render
 from tui_trello.ui.bidi import BidiText, visual
 from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar, index_of
 from tui_trello.ui.screens.picker import Choice
@@ -39,9 +39,11 @@ class TriageScreen(BoardScreen):
     """
 
     BINDINGS = [
-        Binding("s", "cycle_sort", "Sort"),
-        Binding("l,right", "open", "Open", show=False),
+        Binding("s", "cycle_sort", "Sort", id="triage.sort"),
+        Binding("l,right", "open", "Open", show=False, id="list.open"),
     ]
+
+    FOCUS_WIDGETS = (DataTable,)
 
     def __init__(self) -> None:
         super().__init__()
@@ -53,7 +55,7 @@ class TriageScreen(BoardScreen):
             yield Static(id="status")
             yield Bell()
             yield Spinner()
-        yield Input(id="filter", placeholder=FILTER_HELP)
+        yield Input(id="filter", placeholder=keymap.of(self.app).fill(FILTER_HELP))
         yield DataTable(id="body", cursor_type="row", zebra_stripes=True)
         yield Footer()
 

@@ -15,14 +15,14 @@ from tui_trello import links
 from tui_trello.backend import BackendError
 from tui_trello.emoji import with_emoji
 from tui_trello.models import Card
-from tui_trello.ui import markdown
+from tui_trello.ui import keymap, markdown
 from tui_trello.ui.screens.card import CardScreen
 from tui_trello.ui.screens.picker import AttachmentPickerScreen, Choice
 
 OPENABLE_SCHEMES = {"http", "https", "mailto"}
 ICONS = {"board": "🗂 ", "card": "🃏 ", "comment": "💬 ", "attachment": "📎 ", "web": "🔗 "}
 KIND_NAMES = {"web": "web page"}  # the others are called what they are
-IN_BROWSER = "To see it on trello.com: L, then ctrl+o on its link."
+IN_BROWSER = "To see it on trello.com: {card.follow_link}, then {popup.open_in_browser} on its link."
 
 
 async def follow(app, url: str) -> Literal["screen", "board", "browser", "nothing"]:
@@ -50,7 +50,7 @@ async def follow(app, url: str) -> Literal["screen", "board", "browser", "nothin
             app.notify("That attachment is no longer on its card", severity="warning")
             return "nothing"
         card = await store.card_by_link(link.short_link)
-        if reason := unreachable(card):
+        if reason := unreachable(app, card):
             app.notify(reason, severity="warning", timeout=8, markup=False)  # the name is other people's text
             return "nothing"
         return "screen" if await show_card(app, card.id, card.board_id, link.comment_id) == "opened" else "nothing"
@@ -70,12 +70,13 @@ async def open_board(app, board_id: str) -> Literal["board", "nothing"]:
     return "board" if snapshot is not None and snapshot.board.id == board_id else "nothing"
 
 
-def unreachable(card: Card) -> str:
+def unreachable(app, card: Card) -> str:
     """Why a card fetched for a link can't be shown in the app, or "": it, or its list, is archived."""
+    in_browser = keymap.of(app).fill(IN_BROWSER)
     if card.closed:
-        return f"“{with_emoji(card.name)}” is archived. {IN_BROWSER}"
+        return f"“{with_emoji(card.name)}” is archived. {in_browser}"
     if card.list_closed:
-        return f"“{with_emoji(card.name)}” is in an archived list. {IN_BROWSER}"
+        return f"“{with_emoji(card.name)}” is in an archived list. {in_browser}"
     return ""
 
 

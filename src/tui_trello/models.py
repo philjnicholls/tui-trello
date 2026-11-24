@@ -213,6 +213,7 @@ class Comment:
     date: datetime | None
     reactions: tuple[Reaction, ...] = ()
     author_username: str = ""  # for an @mention in a reply
+    author_id: str = ""  # whose it is: only the author can edit a comment
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> Comment:
@@ -224,6 +225,7 @@ class Comment:
             date=_parse_date(data.get("date")),
             reactions=tuple(Reaction.from_api(r) for r in data.get("reactions") or ()),
             author_username=creator.get("username") or "",
+            author_id=data.get("idMemberCreator") or creator.get("id") or "",
         )
 
     def mine(self, short_name: str, member_id: str) -> Reaction | None:
@@ -379,6 +381,9 @@ class BoardSnapshot:
     def add_card(self, card: Card) -> None:
         self.cards.append(card)
 
+    def remove_card(self, card_id: str) -> None:
+        self.cards = [c for c in self.cards if c.id != card_id]
+
 
 @dataclass
 class WorkSnapshot:
@@ -416,3 +421,6 @@ class WorkSnapshot:
 
     def replace_card(self, card: Card) -> None:
         self.cards = [card if c.id == card.id else c for c in self.cards]
+
+    def remove_card(self, card_id: str) -> None:
+        self.cards = [c for c in self.cards if c.id != card_id]

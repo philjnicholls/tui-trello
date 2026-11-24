@@ -21,7 +21,7 @@ from tui_trello.emoji import with_emoji
 from tui_trello.backend import BackendError
 from tui_trello.files import human_size
 from tui_trello.models import Attachment, CardPreview, Member
-from tui_trello.ui import clipboard, follow
+from tui_trello.ui import clipboard, follow, keymap
 from tui_trello.ui.bidi import visual
 from tui_trello.ui.screens.picker import attachment_hint
 from tui_trello.ui.widgets.card_view import CardView
@@ -51,13 +51,14 @@ class PreviewContext:
 class PreviewCardView(CardView):
     KEY_HINTS = False  # x, a, c and e don't work in the popup, so it doesn't say they do
     MISSING_COMMENT = ("That comment isn't on the card any more, or is older than the 50 shown; "
-                       "ctrl+o opens it on trello.com")
+                       "{popup.open_in_browser} opens it on trello.com")
 
     def say_comment_missing(self) -> None:
         """In the popup, under the title, not in a toast that outlives it."""
         note = self.screen.query_one("#preview-note", Static)
         said = str(note.content)
-        note.update(f"{said}\n{self.MISSING_COMMENT}" if said else self.MISSING_COMMENT)
+        missing = keymap.of(self.app).fill(self.MISSING_COMMENT)
+        note.update(f"{said}\n{missing}" if said else missing)
 
 
 class LinkPreviewScreen(ModalScreen[str | None]):
@@ -83,22 +84,25 @@ class LinkPreviewScreen(ModalScreen[str | None]):
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("escape,q", "close", "Close"),
-        Binding("enter", "follow", "Follow", show=False),
-        Binding("ctrl+o", "open_in_browser", "Open in the browser", show=False),
-        Binding("ctrl+y", "copy_link", "Copy link", show=False),
-        # App bindings don't reach a modal screen: these are the app keys that work here.
-        Binding("question_mark", "app.toggle_help", "Keys", show=False),
-        Binding("X", "app.toggle_done_check_items", "Done items", show=False),
-        Binding("j,down", "app.motion('down')", "Down", show=False),
-        Binding("k,up", "app.motion('up')", "Up", show=False),
-        Binding("G,end", "app.motion('bottom')", "Bottom", show=False),
-        Binding("home", "app.motion('top')", "Top", show=False),
-        Binding("ctrl+d,pagedown", "app.motion('half_down')", "Half page down", show=False),
-        Binding("ctrl+u,pageup", "app.motion('half_up')", "Half page up", show=False),
+        Binding("escape,q", "close", "Close", id="preview.close"),
+        Binding("enter", "follow", "Follow", show=False, id="preview.follow"),
+        Binding("ctrl+o", "open_in_browser", "Open in the browser", show=False, id="popup.open_in_browser"),
+        Binding("ctrl+y", "copy_link", "Copy link", show=False, id="popup.copy_link"),
+        # App bindings don't reach a modal screen: these are the app keys that work here, with the app's ids.
+        Binding("question_mark", "app.toggle_help", "Keys", show=False, id="app.help"),
+        Binding("X", "app.toggle_done_check_items", "Done items", show=False, id="app.done_items"),
+        Binding("j,down", "app.motion('down')", "Down", show=False, id="app.down"),
+        Binding("k,up", "app.motion('up')", "Up", show=False, id="app.up"),
+        Binding("G,end", "app.motion('bottom')", "Bottom", show=False, id="app.bottom"),
+        Binding("home", "app.motion('top')", "Top", show=False, id="app.top"),
+        Binding("ctrl+d,pagedown", "app.motion('half_down')", "Half page down", show=False, id="app.half_down"),
+        Binding("ctrl+u,pageup", "app.motion('half_up')", "Half page up", show=False, id="app.half_up"),
     ]
 
-    HINT = "enter: follow · ctrl+o: open in the browser · ctrl+y: copy link · esc: close"
+    FOCUS_WIDGETS = (CardView,)
+
+    HINT = ("enter: follow · {popup.open_in_browser}: open in the browser · {popup.copy_link}: copy link · "
+            "{preview.close}: close")
 
     def __init__(self, url: str, where: str = "") -> None:
         super().__init__()
@@ -114,7 +118,7 @@ class LinkPreviewScreen(ModalScreen[str | None]):
                 yield Label(self.where, classes="where", markup=False)
             yield Static(id="preview-note")
             yield Vertical(id="preview-slot")
-            yield Label(self.HINT, classes="hint")
+            yield Label(keymap.of(self.app).fill(self.HINT), classes="hint")
 
     def on_mount(self) -> None:
         self.link = links.parse(self.url, self.app.store.link_hosts)

@@ -9,8 +9,11 @@ Motions apply to whatever has focus, so every list, table and scrolling pane mov
     j / k       down / up             gg / G      top / bottom
     ctrl+d / u  half a page           h / l       out / in (per layout)
     gt / gT     next / previous layout
-    /           filter                :           command palette           ?   keys
+    /           search Trello         f           filter the cards on screen
+    :           command palette       ?           keys
     X           show or hide done checklist items, in every card pane (remembered)
+
+Every key has an id, and `[keys]` in config.toml changes it (see `tui_trello.ui.keymap`).
 
 ``open_url`` (``tui-trello --open URL``) is a Trello link followed at start-up in place of the default board.
 """
@@ -24,6 +27,7 @@ from rich.text import Text
 from textual import events, work
 from textual.app import App
 from textual.binding import Binding
+from textual.screen import ModalScreen
 from textual.signal import Signal
 from textual.widget import Widget
 from textual.widgets import Input, TextArea
@@ -36,7 +40,7 @@ from tui_trello.emoji import with_emoji
 from tui_trello.models import Notification
 from tui_trello.prefs import Prefs
 from tui_trello.store import Store
-from tui_trello.ui import desktop, follow, keys_compat, markdown, render
+from tui_trello.ui import desktop, follow, keymap, keys_compat, markdown, render
 from tui_trello.ui.commands import BoardCommands, CardCommands
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
@@ -45,6 +49,7 @@ from tui_trello.ui.screens.mywork import MyWorkScreen
 from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import Choice, PickerScreen
 from tui_trello.ui.screens.preview import LinkPreviewScreen, previewable
+from tui_trello.ui.screens.search import SearchScreen
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.widgets.card_view import CardView
 
@@ -60,16 +65,8 @@ MOTIONS = {
     "half_up": ("page_up",),
 }
 
-# Two-key sequences, vim style. The first key is swallowed until the second arrives.
-CHORDS = {
-    "gg": "motion('top')",
-    "gt": "cycle_mode(1)",
-    "gT": "cycle_mode(-1)",
-}
-CHORD_PREFIXES = {chord[0] for chord in CHORDS}
-
 # Actions that change the screens under a link preview, so are off while one is up.
-PREVIEW_BLOCKED = {"switch_mode", "cycle_mode", "pick_board", "refresh", "command_palette"}
+PREVIEW_BLOCKED = {"switch_mode", "cycle_mode", "pick_board", "refresh", "command_palette", "search"}
 
 
 class TrelloApp(App):
@@ -108,28 +105,31 @@ class TrelloApp(App):
     COMMANDS = App.COMMANDS | {BoardCommands, CardCommands}
 
     BINDINGS = [
-        Binding("1", "switch_mode('browser')", "Browser"),
-        Binding("2", "switch_mode('triage')", "Triage"),
-        Binding("3", "switch_mode('mywork')", "My work"),
-        Binding("4", "switch_mode('notifications')", "Notifications"),
-        Binding("b", "pick_board", "Boards"),
-        Binding("r", "refresh", "Refresh"),
-        Binding("X", "toggle_done_check_items", "Done items", show=False),
-        Binding("j,down", "motion('down')", "Down", show=False),
-        Binding("k,up", "motion('up')", "Up", show=False),
-        Binding("G,end", "motion('bottom')", "Bottom", show=False),
-        Binding("home", "motion('top')", "Top", show=False),
-        Binding("ctrl+d,pagedown", "motion('half_down')", "Half page down", show=False),
-        Binding("ctrl+u,pageup", "motion('half_up')", "Half page up", show=False),
-        Binding("colon", "command_palette", "Commands", show=False),
-        Binding("question_mark", "toggle_help", "Keys"),
-        Binding("q", "quit", "Quit"),
+        Binding("1", "switch_mode('browser')", "Browser", id="app.browser"),
+        Binding("2", "switch_mode('triage')", "Triage", id="app.triage"),
+        Binding("3", "switch_mode('mywork')", "My work", id="app.mywork"),
+        Binding("4", "switch_mode('notifications')", "Notifications", id="app.notifications"),
+        Binding("b", "pick_board", "Boards", id="app.boards"),
+        Binding("r", "refresh", "Refresh", id="app.refresh"),
+        Binding("X", "toggle_done_check_items", "Done items", show=False, id="app.done_items"),
+        Binding("j,down", "motion('down')", "Down", show=False, id="app.down"),
+        Binding("k,up", "motion('up')", "Up", show=False, id="app.up"),
+        Binding("G,end", "motion('bottom')", "Bottom", show=False, id="app.bottom"),
+        Binding("home", "motion('top')", "Top", show=False, id="app.top"),
+        Binding("ctrl+d,pagedown", "motion('half_down')", "Half page down", show=False, id="app.half_down"),
+        Binding("ctrl+u,pageup", "motion('half_up')", "Half page up", show=False, id="app.half_up"),
+        Binding("colon", "command_palette", "Commands", show=False, id="app.commands"),
+        Binding("question_mark", "toggle_help", "Keys", id="app.help"),
+        Binding("slash", "search", "Search", id="app.search"),
+        Binding("q", "quit", "Quit", id="app.quit"),
     ]
 
     def __init__(self, backend: Backend, settings: Settings, drafts: Drafts | None = None,
                  prefs: Prefs | None = None, open_url: str = "") -> None:
         super().__init__(ansi_color=settings.transparent)
         self.settings = settings
+        self.keymap = keymap.KeyMap.build(settings.keys)  # `[keys]`, checked; problems are in `keymap.warnings`
+        self.set_keymap(self.keymap.textual)
         self.prefs = prefs or Prefs()
         # Carries the new "shown" value of `prefs.show_done_check_items`, for every CardView on every screen.
         self.done_check_items_toggled: Signal[bool] = Signal(self, "done_check_items_toggled")
@@ -144,6 +144,11 @@ class TrelloApp(App):
 
     async def on_mount(self) -> None:
         await self.switch_mode(self.settings.layout)
+        if problems := self.settings.warnings + self.keymap.warnings:
+            more = [f"and {len(problems) - 5} more: run `tui-trello keys`"] if len(problems) > 5 else []
+            shown = problems[:5] + more
+            self.notify("\n".join(shown), title="Problems in config.toml", severity="warning", timeout=20,
+                        markup=False)
         if self.open_url:
             self.open_link_at_start(self.open_url)
         else:
@@ -184,10 +189,10 @@ class TrelloApp(App):
             key = event.character or event.key
             if self.pending_chord:
                 chord, self.pending_chord = self.pending_chord + key, ""
-                if chord in CHORDS:
-                    await self.run_action(CHORDS[chord])
+                if action := self.keymap.chords.get(chord):
+                    await self.run_action(action)
                 return  # an unknown sequence is dropped, as in vim
-            if key in CHORD_PREFIXES:
+            if key in self.keymap.chord_prefixes:
                 self.pending_chord = key
                 return
         await super().on_event(event)
@@ -216,9 +221,17 @@ class TrelloApp(App):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action in PREVIEW_BLOCKED and any(isinstance(screen, LinkPreviewScreen) for screen in self.screen_stack):
             return False  # they'd change what is under the popup, which closing it must leave as it was
+        if action == "search" and isinstance(self.screen, ModalScreen):
+            return False  # not over a popup: a picker, the key help, a confirmation
         if action == "toggle_done_check_items":
             return bool(self.screen.query(CardView))  # only where a card pane is
         return True
+
+    @work
+    async def action_search(self) -> None:
+        """`/`: search every board on Trello, archived cards too; go to the card chosen."""
+        if url := await self.push_screen_wait(SearchScreen()):
+            self.action_follow_link(url)
 
     def action_toggle_done_check_items(self) -> None:
         """`X`: show or hide the ticked items of every checklist, in every card pane; remembered."""
@@ -261,7 +274,8 @@ class TrelloApp(App):
         if not new:
             return
         if len(new) > 3:
-            title, body = "Trello", f"{len(new)} new notifications (4 to see them)"
+            title = "Trello"
+            body = f"{len(new)} new notifications " + self.keymap.fill("({app.notifications} to see them)")
             self.notify(body, title=title)
         else:
             for notification in reversed(new):  # oldest first, so the newest toast is at the bottom

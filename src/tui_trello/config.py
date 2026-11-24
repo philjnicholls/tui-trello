@@ -15,6 +15,10 @@ transparent = true           # draw on the terminal's own background (and its tr
 [notifications]
 interval = 60                # check Trello for new notifications every this many seconds; 0 turns checking off
 desktop = true               # raise a desktop notification for each new one, as well as the in-app toast
+
+[keys]                       # change any key: `tui-trello keys` lists every action (id) and its key
+card.delete = "ctrl+x"       # one key, or a list: ["f", "ctrl+f"], or "j,down"
+chord.next_view = "g n"      # a two-key sequence
 ```
 
 `TRELLO_API_KEY`, `TRELLO_TOKEN` and `TRELLO_BOARD` override the file.
@@ -24,7 +28,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 LAYOUTS = ("browser", "triage", "mywork", "notifications")
@@ -40,6 +44,18 @@ def state_dir() -> Path:
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "tui-trello"
 
 
+def flatten_keys(table: dict, prefix: str = "") -> dict[str, object]:
+    """`[keys]` with its nested tables as dotted ids: TOML reads `card.archive = "A"` as a table `card` holding
+    `archive`, so that, `"card.archive" = "A"` and a `[keys.card]` table all give `{"card.archive": "A"}`."""
+    flat: dict[str, object] = {}
+    for name, value in table.items():
+        if isinstance(value, dict):
+            flat.update(flatten_keys(value, f"{prefix}{name}."))
+        else:
+            flat[f"{prefix}{name}"] = value
+    return flat
+
+
 @dataclass
 class Settings:
     api_key: str = ""
@@ -50,6 +66,8 @@ class Settings:
     transparent: bool = True
     notify_interval: int = 60
     desktop_notifications: bool = True
+    keys: dict[str, object] = field(default_factory=dict)  # `[keys]`, flattened to dotted ids; checked by ui/keymap.py
+    warnings: list[str] = field(default_factory=list)  # problems with the file that didn't stop it being read
 
     @classmethod
     def load(cls, path: Path | None = None) -> Settings:
@@ -66,6 +84,11 @@ class Settings:
             notify_interval=int(notifications.get("interval", 60)),
             desktop_notifications=bool(notifications.get("desktop", True)),
         )
+        match data.get("keys", {}):
+            case dict() as table:
+                settings.keys = flatten_keys(table)
+            case _:
+                settings.warnings.append("[keys] must be a table of action = key lines; ignored")
         if settings.layout not in LAYOUTS:
             raise ValueError(f"[ui] layout must be one of {', '.join(LAYOUTS)}, not {settings.layout!r}")
         return settings

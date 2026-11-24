@@ -37,6 +37,8 @@ ATTACHMENT_FIELDS = "name,url,isUpload,bytes,mimeType,date,fileName"
 
 CARD_FIELDS = "name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges,closed"
 
+SEARCH_LIMIT = 50  # cards asked of each of a search's two requests
+
 # Errors raised before any of the request went out: Trello can't have acted on it. Any other (a read timeout, a
 # dropped connection) may come after Trello has.
 NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.UnsupportedProtocol,
@@ -149,8 +151,50 @@ class TrelloBackend:
         body = {"idList": list_id, "name": name, "pos": pos, **({"desc": desc} if desc else {})}
         return Card.from_api(await self._request("POST", "/cards", body=body, fields=CARD_FIELDS))
 
+    async def archive_card(self, card: Card) -> Card:
+        data = await self._request("PUT", f"/cards/{card.id}", closed="true", fields=CARD_FIELDS)
+        return Card.from_api(data)
+
+    async def delete_card(self, card_id: str) -> None:
+        await self._request("DELETE", f"/cards/{card_id}")
+
     async def add_comment(self, card_id: str, text: str) -> Comment:
         return Comment.from_api(await self._request("POST", f"/cards/{card_id}/actions/comments", text=text))
+
+    async def edit_comment(self, card_id: str, comment_id: str, text: str) -> None:
+        # In the body, like a description: a long comment wouldn't fit in a URL.
+        await self._request("PUT", f"/cards/{card_id}/actions/{comment_id}/comments", body={"text": text})
+
+    async def delete_comment(self, card_id: str, comment_id: str) -> None:
+        await self._request("DELETE", f"/cards/{card_id}/actions/{comment_id}/comments")
+
+    async def search_cards(self, query: str) -> list[CardPreview]:
+        """Cards matching `query` on every board, open ones first, then archived ones. Two requests, since whether
+        Trello's search includes archived cards unasked isn't documented: the query as typed, and with `is:archived`.
+        The results are merged by card id; if one request fails the other's results do, unless both fail."""
+        found = await asyncio.gather(*(
+            self._request("GET", "/search", query=q, modelTypes="cards", partial="true", cards_limit=SEARCH_LIMIT,
+                          card_fields=CARD_FIELDS, card_board="true", card_list="true")
+            for q in (query, f"{query} is:archived")), return_exceptions=True)
+        if all(isinstance(result, BaseException) for result in found):
+            raise found[0]
+        hits: dict[str, CardPreview] = {}
+        for result in found:
+            if isinstance(result, BaseException):
+                continue
+            for data in result.get("cards") or ():
+                if data["id"] not in hits:
+                    hits[data["id"]] = self._search_hit(data)
+        return sorted(hits.values(), key=lambda hit: bool(hit.archived))
+
+    @staticmethod
+    def _search_hit(data: dict[str, Any]) -> CardPreview:
+        """A search result's card, with where it is and what of that is archived (as `card_preview` says it)."""
+        card_list, board = data.get("list") or {}, data.get("board") or {}
+        archived = next((what for what, part in (("card", data), ("list", card_list), ("board", board))
+                         if part.get("closed")), "")
+        return CardPreview(Card.from_api(data), f"{board.get('name', '?')} › {card_list.get('name', '?')}", {},
+                           archived)
 
     async def set_description(self, card: Card, desc: str) -> Card:
         data = await self._request("PUT", f"/cards/{card.id}", body={"desc": desc}, fields=CARD_FIELDS)

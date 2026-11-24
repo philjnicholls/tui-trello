@@ -48,7 +48,7 @@ async def main() -> None:
         await shot("browser", "j", "l", "j")
         await shot("move-picker", "m", "d", "o")
         await shot("triage", "escape", "2")
-        await shot("triage-filter", "slash", *"#feat @ada", "enter")
+        await shot("triage-filter", "f", *"#feat @ada", "enter")
         await shot("card", "enter")
         await shot("palette", "escape", "colon", *"command")
         await shot("mywork", "escape", "escape", "3")

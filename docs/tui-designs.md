@@ -18,7 +18,7 @@ So the designs below follow a few rules:
 Three designs are built (A, B and C; `1` `2` `3` or `gt` `gT` switch between them). D to F are proposals.
 
 Every view uses the same vim-style keys: `j` `k` `gg` `G` `ctrl+d` `ctrl+u` to move, `h` to back out and `l` to go
-in, `/` to filter, `:` for the command palette, `?` for the key reference.
+in, `f` to filter, `/` to search every board, `:` for the command palette, `?` for the key reference.
 
 ## A. Browser (built, default)
 
@@ -33,7 +33,7 @@ within one, and the preview follows the cursor, comments included. It shows one 
 ## B. Triage table (built)
 
 Every open card on the board as a row, like `tig`, `htop` or a mail client's index. Sort with `s` (list order, due
-date, last activity), filter with `/`. This is the view for "what is overdue?", "what is Ada working on?", "what
+date, last activity), filter with `f`. This is the view for "what is overdue?", "what is Ada working on?", "what
 has `#bug` and nobody assigned?": questions the web board answers badly because you have to scan every column.
 
 ![triage](screenshots/triage-filter.svg)
@@ -44,7 +44,7 @@ has `#bug` and nobody assigned?": questions the web board answers badly because 
 
 The cards assigned to you, across every board, grouped by when they're due, like taskwarrior or an email "today"
 view. For most people this is the screen to open first: it answers "what should I do now?" without choosing a
-board. `p` hides the preview for a full-width list; `m`, `c` and `/` work as everywhere else, and a move here
+board. `p` hides the preview for a full-width list; `m`, `c` and `f` work as everywhere else, and a move here
 updates the board views too. Data: `/members/me`, `/members/me/cards` and `/members/me/boards` (with lists),
 fetched together.
 

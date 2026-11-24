@@ -5,15 +5,18 @@ import json
 from dataclasses import replace
 
 import pytest
-from textual.widgets import DataTable, TextArea
+from rich.color import Color
+from rich.text import Text
+from textual._xterm_parser import XTermParser
+from textual.widgets import DataTable, OptionList, TextArea
 
 from tui_trello import store as store_module
 from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
 from tui_trello.drafts import drafts_path
-from tui_trello.models import CheckItem, Checklist
-from tui_trello.ui import clipboard, render
+from tui_trello.models import LABEL_COLOURS, CheckItem, Checklist
+from tui_trello.ui import clipboard, keys_compat, render
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
@@ -23,6 +26,8 @@ from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import (
     AttachmentPickerScreen,
     ChecklistPickerScreen,
+    Choice,
+    ConfirmScreen,
     FilePickerScreen,
     LabelPickerScreen,
     LinkPickerScreen,
@@ -30,6 +35,7 @@ from tui_trello.ui.screens.picker import (
     TextPromptScreen,
 )
 from tui_trello.ui.screens.preview import LinkPreviewScreen
+from tui_trello.ui.screens.search import SearchScreen
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.tips import TIPS
 from tui_trello.ui.widgets.card_view import CardView
@@ -75,7 +81,7 @@ async def test_triage_filter_and_sort(app) -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.press("2")
         await pilot.pause()
-        await pilot.press("slash", *"#bug", "enter")
+        await pilot.press("f", *"#bug", "enter")
         assert {c.name for c in app.screen.rows} == {
             "Crash when a card has no description", "Token stored in plain text in config"}
         await pilot.press("escape", "s")
@@ -150,7 +156,7 @@ async def test_vim_keys(app) -> None:
 async def test_browser_filter(app) -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("slash", *"#bug", "enter")
+        await pilot.press("f", *"#bug", "enter")
         assert [c.name for c in app.screen.cards] == ["Crash when a card has no description"]
         assert app.focused.id == "cards"
         await pilot.press("escape")
@@ -1263,7 +1269,7 @@ async def test_new_card_while_filtering() -> None:
         await pilot.pause()
         await pilot.press("n", *"Quietly", "enter")
         await pilot.pause()
-        await pilot.press("slash", *"qui")  # typing a filter when the card is made
+        await pilot.press("f", *"qui")  # typing a filter when the card is made
         backend.release.set()
         await pilot.pause()
         assert app.screen.query_one("#filter").has_focus
@@ -1275,7 +1281,7 @@ async def test_new_card_while_filtering() -> None:
 async def test_new_card_hidden_by_filter(app) -> None:
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("slash", *"#bug", "enter")
+        await pilot.press("f", *"#bug", "enter")
         await pilot.pause()
         await pilot.press("n", *"Not a bug", "enter")
         await pilot.pause()
@@ -1319,7 +1325,7 @@ async def test_new_card_filter_note_only_for_the_board_on_screen() -> None:
     app, backend = slow_app()
     async with app.run_test(size=(120, 30)) as pilot:
         await pilot.pause()
-        await pilot.press("slash", *"#bug", "enter")
+        await pilot.press("f", *"#bug", "enter")
         await pilot.pause()
         await pilot.press("n", *"Not a bug", "enter")
         await pilot.pause()
@@ -2628,3 +2634,660 @@ async def test_preview_shows_the_draft_marker_without_keys(app, backend) -> None
         await settle(pilot, 8)
         text = preview_text(app)
         assert "draft" in text and "unsent comment" in text and "c: unsent" not in text
+
+
+# -- label colours, alt+p ---------------------------------------------------------------------------------------------
+
+
+async def show_card(app, pilot, name: str) -> None:
+    """In the browser: the card highlighted in the cards column, which has the focus."""
+    snapshot = app.store.snapshot
+    card = next(c for c in snapshot.cards if c.name == name)
+    app.screen.query_one("#lists", OptionList).highlighted = [lst.id for lst in snapshot.lists].index(card.list_id)
+    await settle(pilot)
+    await pilot.press("l")
+    app.screen.query_one("#cards", OptionList).highlighted = [c.id for c in app.screen.cards].index(card.id)
+    await settle(pilot)
+    assert app.screen.current_card().id == card.id
+
+
+def cell_colours(app, label: str) -> dict[str, tuple]:
+    """The foreground of each `█` on the screen's rows that name the label, as an RGB triple."""
+    colours = {}
+    for row in app.screen._compositor.render_update(full=True).strips:
+        segments = [segment for strip in row for segment in strip]
+        text = "".join(segment.text for segment in segments)
+        if label in text and "█" in text:
+            colours[label] = [segment.style.color.get_truecolor() for segment in segments if "█" in segment.text][-1]
+    return colours
+
+
+async def test_label_picker_draws_label_colours(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await show_card(app, pilot, "Token stored in plain text in config")  # labels: bug and blocked
+        await pilot.press("t")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, LabelPickerScreen)
+        for name, colour in [("blocked", "orange"), ("ux", "purple"), ("ops", "blue")]:
+            expected = Color.parse(LABEL_COLOURS[colour]).get_truecolor()
+            assert cell_colours(app, name) == {name: expected}, name
+
+
+def test_picker_rows_keep_rich_colour_names() -> None:
+    for colour in LABEL_COLOURS.values():
+        choice = Choice("label", "value", marker=Text("█ ", style=colour))
+        content = PickerScreen.option("label", choice).prompt
+        assert content.spans[0].style.foreground is not None, colour
+
+
+async def terminal_keys(app, pilot, data: str) -> None:
+    """Send `data` as a terminal does: through Textual's own parser, which makes Alt+P from ESC then `p`, a Key that
+    is `is_printable`. The pilot's `press("alt+p")` sends one that isn't, so it can't show what a terminal does."""
+    keys_compat.install()
+    parser = XTermParser(debug=False)
+    for event in [*parser.feed(data), *parser.feed("")]:
+        app.post_message(event)
+    await settle(pilot, 8)
+
+
+async def test_alt_p_from_a_terminal_previews(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        await pilot.press(*"move")
+        await terminal_keys(app, pilot, "\x1bp")
+        assert isinstance(app.screen, LinkPreviewScreen)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert isinstance(app.screen, LinkPickerScreen)
+        assert app.screen.query_one("Input").value == "move"
+
+
+# -- archive and delete cards, edit and delete comments --------------------------------------------------------------
+
+
+def confirming(app) -> bool:
+    return isinstance(app.screen, ConfirmScreen)
+
+
+async def test_archive_card(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.store.load_work()
+        card = card_named(backend, "Keyboard shortcut cheat sheet")
+        assert app.store.work.card(card.id)
+        await show_card(app, pilot, card.name)
+        await pilot.press("A")
+        await settle(pilot)
+        assert confirming(app) and "Archive “Keyboard shortcut cheat sheet”?" in preview_text(app)
+        assert "y: archive · n: cancel" in preview_text(app)
+        await pilot.press("y")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, BrowserScreen)
+        assert not app.store.snapshot.card(card.id) and not app.store.work.card(card.id)
+        assert card.name not in [c.name for c in app.screen.cards]
+        assert app.screen.current_card().name == "Offline cache for boards"  # the card that was below
+        assert (await backend.card(card.id)).closed
+        assert toasts(app)[-1] == "Archived “Keyboard shortcut cheat sheet”"
+
+
+async def test_cursor_stays_on_its_row_when_the_card_leaves(app, backend) -> None:
+    """Moving the highlighted card to another list, like archiving it, leaves the cursor on the card that followed."""
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await show_card(app, pilot, "Keyboard shortcut cheat sheet")
+        await pilot.press("m", *"review", "enter")
+        await settle(pilot, 8)
+        assert app.screen.current_card().name == "Offline cache for boards"
+        await pilot.press("h", "j")  # another list: its cursor starts at the top
+        await settle(pilot)
+        assert app.screen.query_one("#cards", OptionList).highlighted == 0
+
+
+@pytest.mark.parametrize("cancel", ["n", "escape"])
+async def test_archive_cancelled(app, backend, cancel) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = card_named(backend, "Keyboard shortcut cheat sheet")
+        await show_card(app, pilot, card.name)
+        await pilot.press("A", cancel)
+        await settle(pilot)
+        assert isinstance(app.screen, BrowserScreen) and app.store.snapshot.card(card.id)
+        assert not (await backend.card(card.id)).closed
+
+
+async def test_enter_does_not_confirm(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = card_named(backend, "Keyboard shortcut cheat sheet")
+        await show_card(app, pilot, card.name)
+        await pilot.press("D", "enter")
+        await settle(pilot)
+        assert confirming(app) and "for good" in preview_text(app)
+        await pilot.press("n")
+        await settle(pilot)
+        assert app.store.snapshot.card(card.id) and not (await backend.card(card.id)).closed
+
+
+async def test_delete_card_from_card_screen(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = card_named(backend, "Move cards between lists")
+        await show_card(app, pilot, card.name)
+        await pilot.press("enter")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("c", *"unsent words", "escape")
+        await settle(pilot)
+        assert app.store.draft("comment", card.id)
+        await pilot.press("D", "y")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, BrowserScreen) and not card_screens(app)
+        with pytest.raises(BackendError):
+            await backend.card(card.id)
+        assert app.store.draft("comment", card.id) is None and not app.store.snapshot.card(card.id)
+
+
+async def own_comment_card(app, pilot, backend, name: str = "Move cards between lists"):
+    await pilot.pause()
+    card = card_named(backend, name)
+    await show_card(app, pilot, card.name)
+    return card
+
+
+async def test_edit_own_comment(app, backend) -> None:
+    async with app.run_test(size=(120, 60)) as pilot:
+        card = await own_comment_card(app, pilot, backend)
+        await pilot.press("E")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, PickerScreen) and len(app.screen.shown) == 1  # Ada's; Grace's and Alan's aren't
+        assert app.screen.shown[0].label.startswith("Ada Lovelace")
+        await pilot.press("enter")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, TextPromptScreen)
+        assert app.screen.query_one(TextArea).text.startswith("Pushed a first version")
+        await pilot.press("end", *" (edited)", "enter")
+        await settle(pilot, 8)
+        comments = await backend.comments(card.id)
+        assert [c.text.endswith("(edited)") for c in comments] == [False, False, True]
+        assert toasts(app)[-1] == "Comment saved"
+        assert "(edited)" in "\n".join(screen_lines(app))
+
+
+async def test_edit_unchanged_makes_no_request(app, backend, monkeypatch) -> None:
+    calls = []
+    original = backend.edit_comment
+
+    async def edit_comment(*args):
+        calls.append(args)
+        await original(*args)
+
+    monkeypatch.setattr(backend, "edit_comment", edit_comment)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await own_comment_card(app, pilot, backend)
+        await pilot.press("E", "enter")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, TextPromptScreen)
+        await pilot.press("enter")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, BrowserScreen) and calls == []
+
+
+@pytest.mark.parametrize("key", ["E", "d"])
+async def test_no_own_comments(app, backend, key) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await own_comment_card(app, pilot, backend, "Command palette: jump to any card")  # Grace's and Alan's
+        await pilot.press(key)
+        await settle(pilot, 6)
+        assert isinstance(app.screen, BrowserScreen)
+        assert toasts(app)[-1] == "You have no comments on this card"
+
+
+async def test_delete_own_comment(app, backend) -> None:
+    async with app.run_test(size=(120, 60)) as pilot:
+        card = await own_comment_card(app, pilot, backend)
+        assert "Pushed a first version" in "\n".join(screen_lines(app))
+        await pilot.press("d", "enter")
+        await settle(pilot, 6)
+        assert confirming(app) and "Delete your comment?" in preview_text(app)
+        await pilot.press("y")
+        await settle(pilot, 8)
+        assert [c.author for c in await backend.comments(card.id)] == ["Grace Hopper", "Alan Turing"]
+        assert "Pushed a first version" not in "\n".join(screen_lines(app))
+        assert app.store.snapshot.card(card.id).comment_count == 2
+        assert card_named(backend, card.name).comment_count == 2
+        assert toasts(app)[-1] == "Comment deleted"
+
+
+@pytest.mark.parametrize("method, keys", [("archive_card", ("A", "y")), ("delete_card", ("D", "y"))])
+async def test_archive_failure_keeps_the_card(app, backend, monkeypatch, method, keys) -> None:
+    async def failing(*args):
+        raise BackendError("nope")
+
+    monkeypatch.setattr(backend, method, failing)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = card_named(backend, "Keyboard shortcut cheat sheet")
+        await show_card(app, pilot, card.name)
+        await pilot.press(*keys)
+        await settle(pilot, 8)
+        assert toasts(app)[-1] == "nope" and app.store.snapshot.card(card.id)
+        assert isinstance(app.screen, BrowserScreen) and app.screen.current_card().id == card.id
+
+
+async def test_comment_edit_and_delete_failures_change_nothing(app, backend, monkeypatch) -> None:
+    async def failing(*args):
+        raise BackendError("nope")
+
+    monkeypatch.setattr(backend, "edit_comment", failing)
+    monkeypatch.setattr(backend, "delete_comment", failing)
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = await own_comment_card(app, pilot, backend)
+        await pilot.press("E", "enter", *" more", "enter")
+        await settle(pilot, 8)
+        assert toasts(app)[-1] == "nope Your edit was not saved."
+        await pilot.press("d", "enter", "y")
+        await settle(pilot, 8)
+        assert toasts(app)[-1] == "nope"
+        assert len(await backend.comments(card.id)) == 3 and app.store.snapshot.card(card.id).comment_count == 3
+        comments = await app.store.comments(card.id)
+        assert len(comments) == 3 and not comments[2].text.endswith("more")
+
+
+# -- search ------------------------------------------------------------------------------------------------------------
+
+
+async def search_for(app, pilot, text: str) -> None:
+    await pilot.press("slash", *text)
+    await asyncio.sleep(SearchScreen.SEARCH_DELAY + 0.2)
+    await settle(pilot, 8)
+
+
+def search_rows(app) -> list[str]:
+    """What the search popup lists, as text."""
+    return [option.prompt.plain for option in app.screen.query_one(OptionList).options]
+
+
+async def test_slash_searches_everywhere(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        for keys in [(), ("2",), ("3",), ("4",)]:
+            await pilot.press(*keys, "slash")
+            await settle(pilot)
+            assert isinstance(app.screen, SearchScreen), keys
+            await pilot.press("escape")
+            await settle(pilot)
+        await pilot.press("1", "l", "l", "enter")  # a card screen
+        await settle(pilot, 6)
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("slash")
+        await settle(pilot)
+        assert isinstance(app.screen, SearchScreen)
+        await pilot.press("escape", "escape")
+        await settle(pilot)
+        app.action_open_link(card_named(backend, "Split backend from UI").url)
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        await pilot.press("slash")
+        await settle(pilot)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        await pilot.press("escape", "question_mark", "slash")
+        await settle(pilot)
+        assert isinstance(app.screen, KeysScreen)
+
+
+async def test_search_finds_cards_on_every_board(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.store.snapshot.board.name == "Product roadmap"
+        await search_for(app, pilot, "passport")
+        assert isinstance(app.screen, SearchScreen)
+        rows = search_rows(app)
+        assert len(rows) == 1 and "Renew passport" in rows[0] and "Home › To do" in rows[0]
+
+
+async def test_search_finds_archived_cards(app, backend) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await search_for(app, pilot, "drag")
+        rows = search_rows(app)
+        assert len(rows) == 1 and "🗄" in rows[0] and "Drag and drop cards with the mouse" in rows[0]
+        assert "archived" in rows[0]
+        await pilot.press("escape")
+        await show_card(app, pilot, "Vim keys for navigation")
+        await pilot.press("A", "y")
+        await settle(pilot, 8)
+        await search_for(app, pilot, "vim keys")
+        rows = search_rows(app)
+        assert len(rows) == 1 and "🗄" in rows[0] and "Vim keys for navigation" in rows[0]
+
+
+async def test_search_enter_opens_the_card(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await search_for(app, pilot, "passport")
+        await pilot.press("enter")
+        await settle(pilot, 12)
+        assert isinstance(app.screen, CardScreen) and app.screen.current_card().name == "Renew passport"
+        assert app.store.snapshot.board.name == "Home"
+
+
+async def test_search_enter_on_archived_previews(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await search_for(app, pilot, "drag")
+        await pilot.press("enter")
+        await settle(pilot, 10)
+        assert isinstance(app.screen, LinkPreviewScreen) and "Archived card" in preview_text(app)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert isinstance(app.screen, SearchScreen) and app.screen.query_one("Input").value == "drag"
+        assert len(app.screen.shown) == 1
+
+
+async def test_search_alt_p_from_a_terminal(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await search_for(app, pilot, "passport")
+        await terminal_keys(app, pilot, "\x1bp")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, LinkPreviewScreen) and "Renew passport" in preview_text(app)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert app.screen.query_one("Input").value == "passport"
+
+
+async def test_search_waits_for_typing_to_stop(app, backend, monkeypatch) -> None:
+    queries = []
+    original = backend.search_cards
+
+    async def search_cards(query):
+        queries.append(query)
+        return await original(query)
+
+    monkeypatch.setattr(backend, "search_cards", search_cards)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("slash", "p")
+        await asyncio.sleep(SearchScreen.SEARCH_DELAY + 0.2)
+        await settle(pilot)
+        assert queries == [] and "Type to search every board" in preview_text(app)
+        await pilot.press(*"ass")
+        assert "Searching…" in preview_text(app) or queries == []
+        await asyncio.sleep(SearchScreen.SEARCH_DELAY + 0.2)
+        await settle(pilot, 8)
+        assert queries == ["pass"]
+        await pilot.press(*"zzzz")
+        await asyncio.sleep(SearchScreen.SEARCH_DELAY + 0.2)
+        await settle(pilot, 8)
+        assert queries == ["pass", "passzzzz"] and "No cards match" in preview_text(app)
+
+
+async def test_search_failure_is_a_toast(app, backend, monkeypatch) -> None:
+    async def failing(query):
+        raise BackendError("Could not reach Trello")
+
+    monkeypatch.setattr(backend, "search_cards", failing)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await search_for(app, pilot, "passport")
+        assert toasts(app)[-1] == "Could not reach Trello" and isinstance(app.screen, SearchScreen)
+
+
+async def test_f_filters_and_slash_does_not(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("f")
+        assert app.screen.query_one("#filter").has_class("visible")
+        await pilot.press("escape")
+        assert not app.screen.query_one("#filter").has_class("visible")
+        await pilot.press("slash")
+        await settle(pilot)
+        assert isinstance(app.screen, SearchScreen)
+        await pilot.press("escape")
+        await settle(pilot)
+        assert not app.screen.query_one("#filter").has_class("visible")
+
+
+# -- configurable keys -------------------------------------------------------------------------------------------------
+
+
+def keyed_app(backend, **keys) -> TrelloApp:
+    return TrelloApp(backend, Settings(default_board="b-product", keys=keys))
+
+
+async def test_overridden_key_works_everywhere(backend) -> None:
+    app = keyed_app(backend, **{"card.move": "M"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.keymap.warnings == []
+        await pilot.press("l", "m")  # the cards column
+        await settle(pilot)
+        assert isinstance(app.screen, BrowserScreen)
+        for view in ["browser", "triage", "mywork"]:
+            await pilot.press({"browser": "1", "triage": "2", "mywork": "3"}[view])
+            await settle(pilot, 8)
+            await pilot.press("m")
+            await settle(pilot)
+            assert not isinstance(app.screen, PickerScreen), view
+            await pilot.press("M")
+            await settle(pilot)
+            assert isinstance(app.screen, PickerScreen) and "Move" in app.screen.title_text, view
+            await pilot.press("escape")
+            await settle(pilot)
+        await pilot.press("1", "enter")
+        await settle(pilot, 6)
+        if not isinstance(app.screen, CardScreen):
+            await pilot.press("l", "enter")
+            await settle(pilot, 6)
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("m")
+        await settle(pilot)
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("M")
+        await settle(pilot)
+        assert isinstance(app.screen, PickerScreen)
+        await pilot.press("escape")
+        await settle(pilot)
+        moving = [b for b in app.screen.active_bindings.values() if b.binding.action == "move_card"]
+        assert [b.binding.key for b in moving] == ["M"]
+        await pilot.press("question_mark")
+        await settle(pilot)
+        assert any("M" in line and "move to another list" in line for line in screen_lines(app))
+
+
+async def test_override_reaches_popups(backend) -> None:
+    app = keyed_app(backend, **{"popup.preview": "ctrl+r"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        await on_links_card(app, pilot)
+        await pilot.press("L")
+        await settle(pilot)
+        assert "ctrl+r: preview" in preview_text(app)
+        await pilot.press(*"move", "alt+p")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, LinkPickerScreen)
+        await pilot.press("ctrl+r")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen)
+        await pilot.press("escape", "escape")
+        await settle(pilot)
+        await pilot.press("slash")
+        await settle(pilot)
+        assert "ctrl+r: preview" in preview_text(app)
+        await search_for_in_open_popup(app, pilot, "passport")
+        await pilot.press("ctrl+r")
+        await settle(pilot, 8)
+        assert isinstance(app.screen, LinkPreviewScreen)
+
+
+async def search_for_in_open_popup(app, pilot, text: str) -> None:
+    await pilot.press(*text)
+    await asyncio.sleep(SearchScreen.SEARCH_DELAY + 0.2)
+    await settle(pilot, 8)
+
+
+async def test_shared_id_changes_every_place(backend) -> None:
+    app = keyed_app(backend, **{"app.down": "w"})
+    async with app.run_test(size=(120, 14)) as pilot:
+        await pilot.pause()
+        await pilot.press("w")
+        await settle(pilot)
+        assert app.screen.query_one("#lists", OptionList).highlighted == 1
+        await pilot.press("j")
+        await settle(pilot)
+        assert app.screen.query_one("#lists", OptionList).highlighted == 1
+        app.action_open_link(card_named(backend, "Split backend from UI").url)
+        await settle(pilot, 10)
+        view = app.screen.query_one(CardView)
+        assert isinstance(app.screen, LinkPreviewScreen) and view.max_scroll_y > 0 and view.scroll_y == 0
+        await pilot.press("j")
+        await settle(pilot)
+        assert view.scroll_y == 0
+        await pilot.press("w")
+        await settle(pilot)
+        assert view.scroll_y > 0
+
+
+async def test_swapped_keys(backend) -> None:
+    app = keyed_app(backend, **{"card.archive": "D", "card.delete": "A"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.keymap.warnings == []
+        await show_card(app, pilot, "Keyboard shortcut cheat sheet")
+        await pilot.press("D")
+        await settle(pilot)
+        assert confirming(app) and "Archive" in preview_text(app)
+        await pilot.press("n", "A")
+        await settle(pilot)
+        assert confirming(app) and "for good" in preview_text(app)
+
+
+async def test_filter_esc_is_a_binding(backend) -> None:
+    app = keyed_app(backend, **{"list.clear_filter": "ctrl+g"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("f", *"#bug", "enter")
+        await settle(pilot)
+        assert app.screen.query_text == "#bug"
+        await pilot.press("escape")
+        assert app.screen.query_text == "#bug"  # esc is no longer the key
+        await pilot.press("ctrl+g")
+        await settle(pilot)
+        assert app.screen.query_text == "" and not app.screen.query_one("#filter").has_class("visible")
+
+
+async def test_rebound_chord(backend) -> None:
+    app = keyed_app(backend, **{"chord.next_view": "g n"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.keymap.warnings == []
+        await pilot.press("g", "t")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, BrowserScreen)
+        await pilot.press("g", "n")
+        await settle(pilot, 6)
+        assert isinstance(app.screen, TriageScreen)
+
+
+async def test_bad_keys_warn_and_start(backend) -> None:
+    app = keyed_app(backend, **{"card.archiv": "x", "card.move": "c"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        [toast] = [n for n in app._notifications if n.title == "Problems in config.toml"]
+        assert "card.archiv" in toast.message and "card.move" in toast.message and toast.severity == "warning"
+        await pilot.press("l", "m")
+        await settle(pilot)
+        assert isinstance(app.screen, PickerScreen) and "Move" in app.screen.title_text
+        await pilot.press("escape", "c")
+        await settle(pilot)
+        assert isinstance(app.screen, TextPromptScreen)
+
+
+async def test_tips_and_hints_show_effective_keys(backend) -> None:
+    app = keyed_app(backend, **{"list.filter": "ctrl+f"})
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        assert "`ctrl+f` filters the cards" in app.keymap.fill(next(t for t in TIPS if "{list.filter}" in t))
+        assert app.screen.query_one("#filter").placeholder.count("/") == 0
+        assert "enter: apply   esc: clear" in app.screen.query_one("#filter").placeholder
+        view = app.screen.query_one(CardView)
+        view.show(None, app.store.snapshot)
+        for _ in TIPS:
+            if "ctrl+f" in "\n".join(screen_lines(app)):
+                break
+            view.next_tip()
+            await settle(pilot, 2)
+        assert "ctrl+f" in "\n".join(screen_lines(app))
+        await show_card(app, pilot, "Keyboard shortcut cheat sheet")
+        await pilot.press("A")
+        await settle(pilot)
+        assert "/ still finds it" in preview_text(app)
+
+
+class StaleBackend(DemoBackend):
+    """Answers a board or My work load with what was true when it started, and holds it until released."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+        self.held = False
+
+    async def board_snapshot(self, board_id: str):
+        snapshot = await super().board_snapshot(board_id)
+        if self.held:
+            await self.release.wait()
+        return snapshot
+
+    async def my_work(self):
+        work = await super().my_work()
+        if self.held:
+            await self.release.wait()
+        return work
+
+
+@pytest.mark.parametrize("method", ["archive_card", "delete_card"])
+async def test_reload_under_way_does_not_bring_back_a_removed_card(method) -> None:
+    backend = StaleBackend()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.store.load_work()
+        card = card_named(backend, "Keyboard shortcut cheat sheet")
+        backend.held = True
+        reloads = [asyncio.create_task(app.store.open_board("b-product")), asyncio.create_task(app.store.load_work())]
+        await settle(pilot)
+        backend.held = False
+        await getattr(app.store, method)(card)
+        backend.release.set()
+        await asyncio.gather(*reloads)
+        assert not app.store.snapshot.card(card.id) and not app.store.work.card(card.id)
+        assert not app.store._removed
+
+
+async def test_filter_that_hides_the_highlighted_card_goes_to_the_first_match(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await show_card(app, pilot, "Keyboard shortcut cheat sheet")
+        assert app.screen.query_one("#cards", OptionList).highlighted == 1
+        await pilot.press("f", *"#feature", "enter")
+        assert [c.name for c in app.screen.cards] == ["Command palette: jump to any card", "Offline cache for boards"]
+        assert app.screen.query_one("#cards", OptionList).highlighted == 0
+
+
+async def test_failed_search_says_so(app, backend, monkeypatch) -> None:
+    async def failing(query):
+        raise BackendError("Could not reach Trello")
+
+    monkeypatch.setattr(backend, "search_cards", failing)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await search_for(app, pilot, "passport")
+        assert search_rows(app) == ["Search failed: Could not reach Trello"]
+
+
+async def test_demo_comments_keep_the_count_in_step(app, backend) -> None:
+    card = card_named(backend, "Keyboard shortcut cheat sheet")
+    await backend.add_comment(card.id, "hi")
+    assert card_named(backend, card.name).comment_count == card.comment_count + 1

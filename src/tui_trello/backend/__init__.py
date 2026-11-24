@@ -56,7 +56,17 @@ class Backend(Protocol):
 
     async def create_card(self, list_id: str, name: str, desc: str = "", *, pos: str = "bottom") -> Card: ...
 
+    async def archive_card(self, card: Card) -> Card: ...  # the card as Trello now has it, `closed`
+
+    async def delete_card(self, card_id: str) -> None: ...  # for good
+
     async def add_comment(self, card_id: str, text: str) -> Comment: ...
+
+    async def edit_comment(self, card_id: str, comment_id: str, text: str) -> None: ...
+
+    async def delete_comment(self, card_id: str, comment_id: str) -> None: ...
+
+    async def search_cards(self, query: str) -> list[CardPreview]: ...  # open and archived cards, every board
 
     async def set_description(self, card: Card, desc: str) -> Card: ...
 

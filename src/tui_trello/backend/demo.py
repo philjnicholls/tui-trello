@@ -184,6 +184,7 @@ class DemoBackend:
         self._checklists: dict[str, list[Checklist]] = {}
         self._attachments: dict[str, list[Attachment]] = {}
         self._files: dict[str, bytes] = {}  # uploads' content, by attachment id
+        self._archived: dict[str, list[Card]] = {}  # archived cards, by board id
         for board_id, name, slug, starred, layout in [
             ("b-product", "Product roadmap", "product-roadmap", True, PRODUCT_BOARD),
             ("b-home", "Home", "home", False, HOME_BOARD),
@@ -195,6 +196,18 @@ class DemoBackend:
         now = datetime.now(timezone.utc)  # "1h ago" should read so whatever the time of day
         self._notifications = [self.notification(kind, who, card, now - timedelta(hours=hours), unread, extra)
                                for kind, who, card, hours, unread, extra in NOTIFICATIONS]
+        self._seed_archived()
+
+    def _seed_archived(self) -> None:
+        """One archived card, so that search has one to find."""
+        snapshot = self._boards["b-product"]
+        done = next(lst for lst in snapshot.lists if lst.name == "Done")
+        card_id = next(self._ids)
+        self._comments[card_id], self._checklists[card_id], self._attachments[card_id] = [], [], []
+        self._archived[snapshot.board.id] = [Card(
+            card_id, "Drag and drop cards with the mouse", done.id, snapshot.board.id,
+            "Dropped: the app is keyboard first.", pos=99, url=f"https://trello.example/c/{card_id}",
+            last_activity=NOW - timedelta(days=30), closed=True)]
 
     def _add_links_description(self) -> None:
         """Give "Offline cache for boards" a description with a card, comment, attachment, board and web link, which
@@ -240,7 +253,8 @@ class DemoBackend:
                 self._comments[card_id] = [
                     Comment(next(self._ids), author, text, NOW - timedelta(hours=3 * i),
                             tuple(self._reaction(member, emoji) for member, emoji in COMMENT_REACTIONS.get(i, ())),
-                            next((m.username for m in MEMBERS.values() if m.full_name == author), ""))
+                            next((m.username for m in MEMBERS.values() if m.full_name == author), ""),
+                            next((m.id for m in MEMBERS.values() if m.full_name == author), ""))
                     for i, (author, text) in enumerate((ARABIC_COMMENTS if rtl else COMMENTS)[:comments])
                 ]
                 self._checklists[card_id] = self._checklist(checklist, rtl)
@@ -312,18 +326,22 @@ class DemoBackend:
         return BoardSnapshot(snapshot.board, list(snapshot.lists), list(snapshot.cards), dict(snapshot.members),
                              list(snapshot.labels))
 
+    def _cards(self) -> list[tuple[BoardSnapshot, Card]]:
+        """Every card with its board's snapshot: the open ones, then the archived ones."""
+        return [(s, c) for s in self._boards.values() for c in s.cards] + [
+            (self._boards[board_id], c) for board_id, cards in self._archived.items() for c in cards]
+
     async def card(self, card_id: str) -> Card:
-        for snapshot in self._boards.values():
-            for card in snapshot.cards:
-                if card_id in (card.id, links.short_link(card.url, self.link_hosts)):
-                    return card
+        for _, card in self._cards():
+            if card_id in (card.id, links.short_link(card.url, self.link_hosts)):
+                return card
         raise BackendError(f"No card {card_id}")
 
     async def card_preview(self, card_id: str) -> CardPreview:
-        for snapshot in self._boards.values():
-            for card in snapshot.cards:
-                if card_id in (card.id, links.short_link(card.url, self.link_hosts)):
-                    return CardPreview(card, snapshot.location(card), dict(snapshot.members))
+        for snapshot, card in self._cards():
+            if card_id in (card.id, links.short_link(card.url, self.link_hosts)):
+                return CardPreview(card, snapshot.location(card), dict(snapshot.members),
+                                   "card" if card.closed else "")
         raise BackendError(f"No card {card_id}")
 
     async def board(self, board_id: str) -> Board:
@@ -365,10 +383,53 @@ class DemoBackend:
         self._comments[card_id], self._checklists[card_id], self._attachments[card_id] = [], [], []
         return card
 
+    async def archive_card(self, card: Card) -> Card:
+        snapshot, current = self._find(card.id)
+        archived = replace(current, closed=True)
+        snapshot.remove_card(card.id)
+        self._archived.setdefault(snapshot.board.id, []).append(archived)
+        return archived
+
+    async def delete_card(self, card_id: str) -> None:
+        for cards in self._archived.values():
+            if any(c.id == card_id for c in cards):
+                cards[:] = [c for c in cards if c.id != card_id]
+                break
+        else:
+            self._find(card_id)[0].remove_card(card_id)
+        for things in (self._comments, self._checklists, self._attachments):
+            things.pop(card_id, None)
+
     async def add_comment(self, card_id: str, text: str) -> Comment:
-        comment = Comment(next(self._ids), "You", text, datetime.now(timezone.utc))
+        comment = Comment(next(self._ids), "You", text, datetime.now(timezone.utc), author_id=ME)
         self._comments.setdefault(card_id, []).insert(0, comment)
+        for snapshot in self._boards.values():
+            if card := snapshot.card(card_id):
+                snapshot.replace_card(replace(card, comment_count=card.comment_count + 1))
         return comment
+
+    async def edit_comment(self, card_id: str, comment_id: str, text: str) -> None:
+        self._patch_comment(comment_id, lambda c: replace(c, text=text))
+
+    async def delete_comment(self, card_id: str, comment_id: str) -> None:
+        if not any(c.id == comment_id for c in self._comments.get(card_id, [])):
+            raise BackendError(f"No comment {comment_id}")
+        self._comments[card_id] = [c for c in self._comments[card_id] if c.id != comment_id]
+        for snapshot in self._boards.values():  # an archived card isn't on its board
+            if card := snapshot.card(card_id):
+                snapshot.replace_card(replace(card, comment_count=max(card.comment_count - 1, 0)))
+
+    async def search_cards(self, query: str) -> list[CardPreview]:
+        """Cards whose name or description has every word of the query, open ones first. Trello's search terms
+        (`board:`, `is:open`, ...) aren't interpreted here."""
+        words = query.lower().split()
+        hits = []
+        for snapshot, card in self._cards():
+            text = f"{card.name} {card.desc}".lower()
+            if words and all(word in text for word in words):
+                hits.append(CardPreview(card, snapshot.location(card), dict(snapshot.members),
+                                        "card" if card.closed else ""))
+        return sorted(hits, key=lambda hit: bool(hit.archived))
 
     async def me(self) -> Member:
         return MEMBERS[ME]

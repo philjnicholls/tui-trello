@@ -81,6 +81,7 @@ class Store:
         self._ticks = count()
         self._board_fetches: set[int] = set()
         self._made: dict[str, tuple[int, Card]] = {}
+        self._removed: dict[str, int] = {}  # likewise, the cards archived or deleted while one was, with the tick
         self._failed_card_drafts: dict[str, str] = {}  # the new-card draft that failed last, by list
 
     def is_busy(self, *what: str) -> bool:
@@ -114,12 +115,12 @@ class Store:
             for made, card in self._made.values():
                 if made > started and card.board_id == board_id and not snapshot.card(card.id):
                     snapshot.add_card(card)
+            # ... and one removed after it started may still be in it: don't bring it back.
+            for card_id in self._removed_since(started):
+                if snapshot.card(card_id):
+                    snapshot.remove_card(card_id)
         finally:
-            self._board_fetches.discard(started)
-            # Only a fetch still under way can have missed a card.
-            oldest = min(self._board_fetches, default=None)
-            self._made = {card_id: (made, card) for card_id, (made, card) in self._made.items()
-                          if oldest is not None and made > oldest}
+            self._fetch_done(started)
         self.snapshot = snapshot
         self._comments.clear()
         self._checklists.clear()
@@ -127,9 +128,30 @@ class Store:
         self.board_changed.publish(self.snapshot)
         return self.snapshot
 
+    def _removed_since(self, started: int) -> list[str]:
+        return [card_id for card_id, removed in self._removed.items() if removed > started]
+
+    def _fetch_done(self, started: int) -> None:
+        self._board_fetches.discard(started)
+        # Only a fetch still under way can have missed a card or still hold a removed one.
+        oldest = min(self._board_fetches, default=None)
+        self._made = {card_id: (made, card) for card_id, (made, card) in self._made.items()
+                      if oldest is not None and made > oldest}
+        self._removed = {card_id: tick for card_id, tick in self._removed.items()
+                         if oldest is not None and tick > oldest}
+
     async def load_work(self) -> WorkSnapshot:
-        async with self._busy("work"):
-            self.work = await self.backend.my_work()
+        started = next(self._ticks)
+        self._board_fetches.add(started)
+        try:
+            async with self._busy("work"):
+                work = await self.backend.my_work()
+            for card_id in self._removed_since(started):
+                if work.card(card_id):
+                    work.remove_card(card_id)
+        finally:
+            self._fetch_done(started)
+        self.work = work
         self.work_changed.publish(self.work)
         return self.work
 
@@ -309,6 +331,48 @@ class Store:
             self._replace(replace(card, comment_count=card.comment_count + 1))
         return comment
 
+    async def archive_card(self, card: Card) -> Card:
+        """Archive the card on Trello, and take it out of every loaded snapshot."""
+        async with self._busy("save"):
+            archived = await self.backend.archive_card(card)
+        self._remove(card.id)
+        return archived
+
+    async def delete_card(self, card: Card) -> None:
+        """Delete the card for good, and forget it: its cached details and its drafts, which could never be sent."""
+        async with self._busy("save"):
+            await self.backend.delete_card(card.id)
+        self._remove(card.id)
+        for cached in (self._comments, self._checklists, self._attachments):
+            cached.pop(card.id, None)
+        for kind in ("comment", "desc"):
+            self.save_draft(kind, card.id, "")
+
+    async def edit_comment(self, card_id: str, comment: Comment, text: str) -> Comment:
+        """Change the text of one of the member's comments. The new text is what was sent: the reply's shape isn't
+        in Trello's API reference."""
+        async with self._busy("save"):
+            await self.backend.edit_comment(card_id, comment.id, text)
+        updated = replace(comment, text=text)
+        if card_id in self._comments:
+            self._comments[card_id] = [updated if c.id == comment.id else c for c in self._comments[card_id]]
+        self.comments_changed.publish(card_id)
+        return updated
+
+    async def delete_comment(self, card_id: str, comment: Comment) -> None:
+        async with self._busy("save"):
+            await self.backend.delete_comment(card_id, comment.id)
+        if card_id in self._comments:
+            self._comments[card_id] = [c for c in self._comments[card_id] if c.id != comment.id]
+        if card := self.find_card(card_id):
+            self._replace(replace(card, comment_count=max(card.comment_count - 1, 0)))
+        self.comments_changed.publish(card_id)
+
+    async def search_cards(self, query: str) -> list[CardPreview]:
+        """Cards on every board, archived ones too, matching what Trello's search makes of the query. Not cached."""
+        async with self._busy("search"):
+            return await self.backend.search_cards(query)
+
     async def set_description(self, card: Card, desc: str) -> Card:
         async with self._busy("save"):
             updated = await self.backend.set_description(card, desc)
@@ -475,6 +539,19 @@ class Store:
         elif card.board_id in self._labels:
             self._labels[card.board_id].append(label)
         return await self.toggle_label(card, label)
+
+    def _remove(self, card_id: str) -> None:
+        """Take the card out of every loaded snapshot that has it, and tell their screens: the counterpart of
+        `_replace`."""
+        self._made.pop(card_id, None)  # a reload under way mustn't put it back
+        if self._board_fetches:
+            self._removed[card_id] = next(self._ticks)
+        if self.snapshot and self.snapshot.card(card_id):
+            self.snapshot.remove_card(card_id)
+            self.board_changed.publish(self.snapshot)
+        if self.work and self.work.card(card_id):
+            self.work.remove_card(card_id)
+            self.work_changed.publish(self.work)
 
     def _replace(self, card: Card) -> None:
         """Patch the card into every loaded snapshot that has it, and tell their screens."""

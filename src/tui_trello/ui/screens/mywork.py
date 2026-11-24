@@ -16,7 +16,7 @@ from tui_trello.agenda import agenda
 from tui_trello.backend import BackendError
 from tui_trello.emoji import with_emoji
 from tui_trello.models import Card, CardList, WorkSnapshot
-from tui_trello.ui import render
+from tui_trello.ui import keymap, render
 from tui_trello.ui.bidi import fit
 from tui_trello.ui.screens.base import FILTER_HELP, ListScreen, TopBar
 from tui_trello.ui.screens.picker import Choice
@@ -45,9 +45,11 @@ class MyWorkScreen(ListScreen):
     """
 
     BINDINGS = [
-        Binding("l,right", "open", "Open", show=False),
-        Binding("p", "toggle_preview", "Preview"),
+        Binding("l,right", "open", "Open", show=False, id="list.open"),
+        Binding("p", "toggle_preview", "Preview", id="mywork.preview"),
     ]
+
+    FOCUS_WIDGETS = (OptionList, CardView)
 
     def __init__(self, now: datetime | None = None) -> None:
         super().__init__()
@@ -59,7 +61,7 @@ class MyWorkScreen(ListScreen):
             yield Static(id="status")
             yield Bell()
             yield Spinner()
-        yield Input(id="filter", placeholder=FILTER_HELP)
+        yield Input(id="filter", placeholder=keymap.of(self.app).fill(FILTER_HELP))
         with Horizontal(id="body"):
             yield OptionList(id="agenda")
             yield CardView(id="preview")

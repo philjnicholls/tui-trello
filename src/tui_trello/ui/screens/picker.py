@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from rich.text import Text
+from rich.style import Style
+from rich.text import Span, Text
 from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -27,11 +28,23 @@ from tui_trello.emoji import with_emoji
 from tui_trello.files import human_size
 from tui_trello.mentions import candidates, typing_mention
 from tui_trello.models import Attachment, Card, Checklist, Member
-from tui_trello.ui import clipboard, markdown
+from tui_trello.ui import clipboard, keymap, markdown
 from tui_trello.ui.bidi import BidiText, has_rtl
 from tui_trello.ui.commands import match_score
 
 T = TypeVar("T")
+
+
+def to_content(text: Text) -> Content:
+    """A Rich `Text` as Textual `Content`. Textual parses a style given as a string with its own colour names, which
+    differ from Rich's (`dark_orange`, `dodger_blue1`), and drops the colour without a word if it can't; so a string
+    style, the text's own or a span's, is parsed by Rich first."""
+    text = text.copy()
+    if isinstance(text.style, str) and text.style:
+        text.style = Style.parse(text.style)
+    text.spans = [Span(span.start, span.end, Style.parse(span.style) if isinstance(span.style, str) else span.style)
+                  for span in text.spans]
+    return Content.from_rich_text(text)
 
 
 @dataclass(frozen=True)
@@ -66,12 +79,14 @@ class PickerScreen(ModalScreen[T | None]):
     """
 
     BINDINGS = [
-        Binding("escape", "close", "Close"),
-        Binding("down,ctrl+n,ctrl+j", "cursor(1)", "Down", show=False),
-        Binding("up,ctrl+p,ctrl+k", "cursor(-1)", "Up", show=False),
+        Binding("escape", "close", "Close", id="picker.close"),
+        Binding("ctrl+j,down,ctrl+n", "cursor(1)", "Down", show=False, id="picker.down"),
+        Binding("ctrl+k,up,ctrl+p", "cursor(-1)", "Up", show=False, id="picker.up"),
     ]
 
-    HINT = ""
+    FOCUS_WIDGETS = (Input, OptionList)  # the widgets whose own keys can't be changed
+    HINT = ""  # with {id} placeholders for keys
+    PLACEHOLDER = "Type to filter…"
 
     def __init__(self, title: str, choices: list[Choice[T]] | Callable[[], Awaitable[list[Choice[T]]]]) -> None:
         super().__init__()
@@ -84,10 +99,10 @@ class PickerScreen(ModalScreen[T | None]):
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(self.title_text, classes="title")
-            yield Input(placeholder="Type to filter…")
+            yield Input(placeholder=self.PLACEHOLDER)
             yield OptionList()
             if self.HINT:
-                yield Label(self.HINT, classes="hint")
+                yield Label(keymap.of(self.app).fill(self.HINT), classes="hint")
 
     def on_mount(self) -> None:
         if self.loader:
@@ -129,7 +144,7 @@ class PickerScreen(ModalScreen[T | None]):
             prompts = [self.highlight(matcher, c) for c in matches]
         else:
             matches = self.choices
-            prompts = [Content.from_rich_text(c.text) if c.text else c.label for c in matches]
+            prompts = [to_content(c.text) if c.text else c.label for c in matches]
         extras = self.extras(query)
         self.shown = matches + extras
         options.set_options([self.option(p, c) for p, c in zip(prompts, matches)]
@@ -146,7 +161,7 @@ class PickerScreen(ModalScreen[T | None]):
     @staticmethod
     def highlight(matcher: Matcher, choice: Choice) -> Content:
         """The label, styled if the choice has `text`, with the matched letters highlighted."""
-        content = Content.from_rich_text(choice.text) if choice.text else Content(choice.label)
+        content = to_content(choice.text) if choice.text else Content(choice.label)
         if choice.search_only:
             return content
         _, offsets = matcher.fuzzy_search.match(matcher.query, choice.label)
@@ -162,7 +177,7 @@ class PickerScreen(ModalScreen[T | None]):
         hint = Text(f"  {choice.hint}", style="dim") if choice.hint else Text("")
         if has_rtl(choice.label):  # fuzzy highlighting is in logical order; show the reordered name instead
             return Option(BidiText(Text.assemble(marker, choice.text or choice.label, hint), align_rtl=False))
-        return Option(Content.assemble(Content.from_rich_text(marker), prompt, Content.from_rich_text(hint)))
+        return Option(Content.assemble(to_content(marker), prompt, to_content(hint)))
 
     def action_cursor(self, step: int) -> None:
         options = self.query_one(OptionList)
@@ -185,6 +200,44 @@ class PickerScreen(ModalScreen[T | None]):
     def on_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_index < len(self.shown):
             self.choose(self.shown[event.option_index])
+
+
+class ConfirmScreen(ModalScreen[bool]):
+    """A question with a yes: only the yes key confirms (not Enter, which a habit could press). Dismisses with True
+    for yes, False for anything else. `title` and `message` are drawn as they are: they may hold a card's name."""
+
+    DEFAULT_CSS = """
+    ConfirmScreen { align: center middle; }
+    ConfirmScreen > Vertical {
+        width: 60; max-width: 90%; height: auto; border: round $accent; background: $surface; padding: 0 1;
+    }
+    ConfirmScreen .title { text-style: bold; color: $accent; }
+    ConfirmScreen .hint { color: $text-muted; margin-top: 1; }
+    """
+
+    BINDINGS = [
+        Binding("y", "confirm", "Yes", id="confirm.yes"),
+        Binding("n,escape", "cancel", "Cancel", id="confirm.no"),
+    ]
+
+    def __init__(self, title: str, message: str, verb: str) -> None:
+        super().__init__()
+        self.title_text = title
+        self.message = message
+        self.verb = verb
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(self.title_text, classes="title", markup=False)
+            yield Label(self.message, markup=False)
+            yield Label(keymap.of(self.app).fill("{confirm.yes}: ") + f"{self.verb} · "
+                        + keymap.of(self.app).fill("{confirm.no}: cancel"), classes="hint", markup=False)
+
+    def action_confirm(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
 
 
 class TextPromptScreen(ModalScreen[str | None]):
@@ -220,15 +273,18 @@ class TextPromptScreen(ModalScreen[str | None]):
     """
 
     BINDINGS = [
-        Binding("escape", "cancel", "Cancel", priority=True),
-        Binding("enter", "enter", "Save", priority=True),
-        Binding("ctrl+s", "save", "Save", show=False, priority=True),
-        Binding("tab", "accept_mention", "Mention", show=False, priority=True),
-        Binding("down", "mention_cursor(1)", show=False, priority=True),
-        Binding("up", "mention_cursor(-1)", show=False, priority=True),
-        Binding("alt+enter,ctrl+j", "newline", "New line", priority=True),  # alt+enter needs ui/keys_compat.py
-        Binding("ctrl+o", "attach", "Attach a file", show=False, priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True, id="editor.cancel"),
+        Binding("enter", "enter", "Save", priority=True, id="editor.enter"),
+        Binding("ctrl+s", "save", "Save", show=False, priority=True, id="editor.save"),
+        Binding("tab", "accept_mention", "Mention", show=False, priority=True, id="editor.mention"),
+        Binding("down", "mention_cursor(1)", "Next mention", show=False, priority=True, id="editor.mention_down"),
+        Binding("up", "mention_cursor(-1)", "Previous mention", show=False, priority=True, id="editor.mention_up"),
+        # alt+enter needs ui/keys_compat.py
+        Binding("alt+enter,ctrl+j", "newline", "New line", priority=True, id="editor.newline"),
+        Binding("ctrl+o", "attach", "Attach a file", show=False, priority=True, id="editor.attach"),
     ]
+
+    FOCUS_WIDGETS = (TextArea,)
 
     DRAFT_DELAY = 0.4  # seconds after the last key before `on_change`
 
@@ -258,18 +314,18 @@ class TextPromptScreen(ModalScreen[str | None]):
             yield TextArea(self.initial_text)
             yield OptionList(id="mentions")
             if self.multiline:
-                hint = "ctrl+s save · enter new line · esc close"
+                hint = "{editor.save} save · {editor.enter} new line · {editor.cancel} close"
             else:
-                hint = "enter send · alt+enter new line · esc close"
+                hint = "{editor.enter} send · {editor.newline} new line · {editor.cancel} close"
             if self.on_change:
                 hint += " (keeps a draft)"
             if self.mentions_loader:
                 hint += " · @ mention"
             if self.attach:
-                hint += " · ctrl+o attach a file"
+                hint += " · {editor.attach} attach a file"
             if self.hint:
                 hint += f" · {self.hint}"
-            yield Label(hint, classes="hint")
+            yield Label(keymap.of(self.app).fill(hint), classes="hint")
 
     def on_mount(self) -> None:
         area = self.query_one(TextArea)
@@ -399,7 +455,7 @@ class LabelPickerScreen(PickerScreen):
     """A card's labels: Enter puts the highlighted label on the card or takes it off, and the picker stays open
     so several can be changed; typing a name that doesn't exist offers to create it."""
 
-    HINT = "enter: on/off · a new name creates it · esc: done"
+    HINT = "enter: on/off · a new name creates it · {picker.close}: done"
 
     def __init__(self, card_id: str) -> None:
         self.card_id = card_id
@@ -452,7 +508,7 @@ class ChecklistPickerScreen(PickerScreen):
     """A card's checklist items: Enter ticks the highlighted one or unticks it, and the picker stays open so several
     can be done; typing text that matches no item offers to add it to a checklist, or to start a new checklist."""
 
-    HINT = "enter: tick/untick · new text adds an item · esc: done"
+    HINT = "enter: tick/untick · new text adds an item · {picker.close}: done"
 
     def __init__(self, card_id: str) -> None:
         self.card_id = card_id
@@ -513,11 +569,12 @@ class AttachmentPickerScreen(PickerScreen):
     trello.com serves to the logged-in browser. ctrl+s saves an upload to the downloads directory, ctrl+y copies the
     link. "attach a file" browses for one to upload; typing or pasting a URL offers to attach it as a link."""
 
-    HINT = "enter: open in the browser · ctrl+s: save to Downloads · ctrl+y: copy link · paste a URL to attach it"
+    HINT = ("enter: open in the browser · {attachments.save}: save to Downloads · {popup.copy_link}: copy link · "
+            "paste a URL to attach it")
 
     BINDINGS = [
-        Binding("ctrl+s", "save", "Save", show=False),
-        Binding("ctrl+y", "copy_link", "Copy link", show=False),
+        Binding("ctrl+s", "save", "Save", show=False, id="attachments.save"),
+        Binding("ctrl+y", "copy_link", "Copy link", show=False, id="popup.copy_link"),
     ]
 
     def __init__(self, card_id: str, target: str = "") -> None:
@@ -608,12 +665,15 @@ class LinkPickerScreen(PickerScreen[str]):
     ctrl+o opens it in the web browser whatever it is, ctrl+y copies it, alt+p previews a card, comment or
     attachment link in a popup (any other link is followed, as on enter)."""
 
-    HINT = "enter: follow · alt+p: preview · ctrl+o: open in the browser · ctrl+y: copy link"
+    HINT = ("enter: follow · {popup.preview}: preview · {popup.open_in_browser}: open in the browser · "
+            "{popup.copy_link}: copy link")
 
     BINDINGS = [
-        Binding("alt+p", "preview", "Preview", show=False),
-        Binding("ctrl+o", "open_in_browser", "Open in the browser", show=False),
-        Binding("ctrl+y", "copy_link", "Copy link", show=False),
+        # priority: a terminal sends alt+p as ESC then p, which reaches the filter box as a printable `p` that it
+        # would type instead of letting the screen's binding see it.
+        Binding("alt+p", "preview", "Preview", show=False, priority=True, id="popup.preview"),
+        Binding("ctrl+o", "open_in_browser", "Open in the browser", show=False, id="popup.open_in_browser"),
+        Binding("ctrl+y", "copy_link", "Copy link", show=False, id="popup.copy_link"),
     ]
 
     def __init__(self, card: Card, choices: list[Choice[str]]) -> None:
@@ -675,7 +735,7 @@ class FilePickerScreen(PickerScreen):
     path (~ works) offers to pick that file or go to that folder. Hidden files are left out unless typed. Starts
     where the last file was picked, this session, else in the working directory."""
 
-    HINT = "enter: open folder / pick file · type a path to go there · esc: cancel"
+    HINT = "enter: open folder / pick file · type a path to go there · {picker.close}: cancel"
 
     last_dir: Path | None = None
 

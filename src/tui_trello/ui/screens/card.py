@@ -22,7 +22,9 @@ class CardScreen(CardActionsScreen):
     CardScreen CardView { padding: 1 4; }
     """
 
-    BINDINGS = [Binding("escape,q,h,left", "app.pop_screen", "Back")]
+    BINDINGS = [Binding("escape,q,h,left", "app.pop_screen", "Back", id="card_screen.back")]
+
+    FOCUS_WIDGETS = (CardView,)
 
     def __init__(self, card_id: str, comment_id: str = "") -> None:
         super().__init__()
@@ -56,3 +58,8 @@ class CardScreen(CardActionsScreen):
 
     def current_card(self) -> Card | None:
         return self.app.store.find_card(self.card_id)
+
+    def card_gone(self, card: Card) -> None:
+        """The card was archived or deleted: there is nothing left to show, so go back."""
+        if card.id == self.card_id and self.app.screen is self:
+            self.app.pop_screen()

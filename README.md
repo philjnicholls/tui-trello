@@ -46,6 +46,11 @@ transparent = true           # use the terminal's own background and colours (th
 [notifications]
 interval = 60                # check for new Trello notifications every minute; 0 turns it off
 desktop = true               # also raise a desktop notification for each new one
+
+[keys]                       # change any key; see "Changing keys" below
+card.delete = "ctrl+x"       # delete the card with ctrl+x instead of D
+list.filter = ["f", "ctrl+f"]
+chord.next_view = "g n"      # a two-key sequence
 ```
 
 `TRELLO_API_KEY` and `TRELLO_TOKEN` in the environment are only for the older token flow; leave them unset.
@@ -78,6 +83,20 @@ the emoji, in card names and notifications too.
 |     |               | due dates                                                                       |
 
 ![my work](docs/screenshots/mywork.svg)
+
+## Searching
+
+`/` searches every board you can see, from any view, and `f` filters the cards already on screen (see Keys). The popup
+asks Trello as you type: it waits for a short pause, needs two characters, and matches the start of words, so `passp`
+finds "Renew passport". Each result shows the card, "Board › List", and a mark when the card, its list or its board is
+archived (🗄). Trello's own search terms work as typed: `board:home`, `label:bug`, `is:open`, `is:archived`.
+
+Enter on an open card goes to it, loading its board if needed. An archived card is not on any board the app loads, so
+enter opens its preview; `alt+p` previews any result, and `esc` there comes back to the search as you left it. In
+`--demo` the search runs over the demo's cards (its operators are not interpreted).
+
+`A` archives the current card and `D` deletes it for good, from any view with a card; each asks first, and only `y`
+confirms. An archived card can be found again with `/`, and trello.com can restore it.
 
 ## Drafts
 
@@ -117,6 +136,10 @@ the comment itself, from an earlier reply, are left out. An unsent comment on th
 `R` reacts to a comment: pick the comment, then an emoji. Picking one you've already given takes it off. A comment's
 reactions show under it, each emoji with who gave it (a count, past three people), yours highlighted.
 
+`E` edits one of your own comments and `d` deletes one: each lists only your comments on the card, `E` opens the
+comment editor with its text and saves the change on Trello, `d` asks before deleting. Other people's comments are never
+offered, even if you administer the board.
+
 `y` copies the link to the card; `Y` picks a comment and copies the link to it. On a local desktop the link goes
 through `wl-copy`, `xclip`, `xsel` or `pbcopy`, whichever is installed. Elsewhere, over SSH for instance, the app asks
 the terminal to copy it (OSC 52); most terminals do, but GNOME Terminal and other VTE-based ones don't.
@@ -143,7 +166,7 @@ board, a card link on the card's board with the card open, a comment link the sa
 attachment link opens the attachments picker over the default board. It starts in the browser view unless `--layout`
 says otherwise. A URL that isn't a Trello board, card, comment or attachment link is refused before the app starts. With
 `--demo` it takes the demo's `trello.example` links. Put the URL in single quotes: `#`, `?` and `&` mean things to the
-shell. `--open` can't be combined with `--board`, `login` or `logout`.
+shell. `--open` can't be combined with `--board`, `login`, `logout` or `keys`.
 
 A click on a card, comment or attachment link, or `alt+p` on it in the `L` list, opens a preview in a popup instead of
 going there: the whole card (description, attachments, checklists and comments, with a linked comment marked), or the
@@ -174,7 +197,8 @@ says so, run `tui-trello login` again.
 
 ## Keys
 
-Vim-style throughout; `?` in the app shows the keys for the view you are in, and `a` there shows them all.
+Vim-style throughout; `?` in the app shows the keys for the view you are in, and `a` there shows them all. Every key
+can be changed: see [Changing keys](#changing-keys).
 
 | key                    | does                                                                               |
 | ---------------------- | ---------------------------------------------------------------------------------- |
@@ -183,7 +207,9 @@ Vim-style throughout; `?` in the app shows the keys for the view you are in, and
 | `gg` `G`               | first, last                                                                        |
 | `ctrl+d` `ctrl+u`      | half a page down, up                                                               |
 | `1`-`4`, `gt` `gT`     | switch view                                                                        |
-| `/`                    | filter: `words #label @member list:name !overdue !due`; `esc` clears               |
+| `/`                    | search every board on Trello, archived cards too; enter opens, `alt+p` previews    |
+| `f`                    | filter the cards on screen: `words #label @member list:name !overdue !due`;        |
+|                        | `esc` clears                                                                       |
 | `:`                    | command palette: jump to any board or card                                         |
 | `b`                    | pick a board                                                                       |
 | `n`                    | new card on the list (triage, my work: pick the list first); the first line is its |
@@ -199,6 +225,8 @@ Vim-style throughout; `?` in the app shows the keys for the view you are in, and
 | `C`                    | reply to a comment (on a card or in notifications): a new comment quoting it and   |
 |                        | @mentioning its author                                                             |
 | `R`                    | react to a comment: pick the comment, then an emoji; picking yours takes it off    |
+| `E` `d`                | edit, delete one of your own comments: pick it first; delete asks first            |
+| `A` `D`                | archive the card, delete it for good; both ask first (`y` confirms, not enter)     |
 | `y` `Y`                | copy the link to the card, to one of its comments                                  |
 | `L`                    | follow a link on the card: Trello cards, comments, boards and attachments open     |
 |                        | here, the rest in the browser; `alt+p` in the list previews a card, comment or     |
@@ -210,6 +238,121 @@ Vim-style throughout; `?` in the app shows the keys for the view you are in, and
 | `r`                    | reload                                                                             |
 | `ctrl+j` `ctrl+k`      | down, up in a picker (typing filters it)                                           |
 | `q` / `esc`            | quit / back                                                                        |
+
+## Changing keys
+
+Every key binding has an id, such as `card.archive`: a group, a dot and what it does. `[keys]` in
+`~/.config/tui-trello/config.toml` maps ids to keys, and a restart picks the change up everywhere: on every view and
+popup, in the footer, the `?` help, the tips and the hints in popups.
+
+```toml
+[keys]
+card.delete = "ctrl+x"            # delete the card with ctrl+x instead of D
+list.filter = ["f", "ctrl+f"]     # two keys for the filter
+app.down = "j,down,ctrl+n"        # a comma-separated string works too
+chord.next_view = "g n"           # a two-key sequence: g, then n
+popup.preview = "ctrl+r"          # preview in the links and search popups
+```
+
+`tui-trello keys` prints every id with the key it has now, as lines to copy into the file, and checks `[keys]`.
+
+- A key is a character (`"A"`, `"?"`, `"/"`) or a key name (`"enter"`, `"escape"`, `"tab"`, `"space"`, `"up"`,
+  `"pagedown"`, `"f5"`, `"comma"` for `,`), with `ctrl+`, `alt+`, `shift+`, `meta+` or `super+` in front if you like
+  (`"ctrl+a"`, `"alt+p"`). `shift+a` means `A`, which is what the terminal sends for Shift+A.
+- A value is one key, a comma-separated string, or a list. The keys you give replace *all* the id's defaults: after
+  `app.down = "n"`, `j` and the down arrow no longer move down.
+- Several places can share an id, and an override changes them all: `app.down` is also the scroll key in the link
+  preview, and `popup.copy_link` copies a link in the links, attachments and preview popups.
+- A chord is exactly two characters, with or without a space (`"g t"`, `"gt"`). Chords only start with a character.
+- `[keys]` also takes `card.archive = "A"` written as a `[keys.card]` table with `archive = "A"`, or as
+  `"card.archive" = "A"`.
+- A mistake never stops the app: an unknown id (it suggests the nearest), a value that is not a key, or a printable
+  key (a letter, a digit, a symbol) for a popup with a text box, which would type it, is skipped, and the id keeps its
+  default. So is a *clash*: a key another action already has where both work, such as `card.archive = "m"` (Move) or a
+  chord's first key. Of two overrides that clash, the later one is skipped. A swap (`card.archive = "D"` with
+  `card.delete = "A"`) is not a clash. One toast at start-up lists the problems, and `tui-trello keys` prints them and
+  exits with status 1.
+- Not changeable: Textual's own keys (`ctrl+q`, `ctrl+c`, `ctrl+p`), the keys inside text boxes and lists (typing,
+  arrows, Home and End, enter on a row), the mouse, and the filter's query language. A key can also be valid and never
+  arrive, because the terminal does not send it (`ctrl+1`, `super+` keys): try a new key in your terminal.
+- A key cannot be switched off, only moved.
+
+Every id, with its default key:
+
+<!-- keys-table -->
+| id                            | default                | what it does                             |
+| ----------------------------- | ---------------------- | ---------------------------------------- |
+| `app.browser`                 | `1`                    | Go to the browser view                   |
+| `app.triage`                  | `2`                    | Go to the triage view                    |
+| `app.mywork`                  | `3`                    | Go to my work                            |
+| `app.notifications`           | `4`                    | Go to notifications                      |
+| `app.boards`                  | `b`                    | Pick a board                             |
+| `app.refresh`                 | `r`                    | Reload from Trello                       |
+| `app.done_items`              | `X`                    | Show or hide ticked checklist items      |
+| `app.down`                    | `j, down`              | Move down (any list, table or pane)      |
+| `app.up`                      | `k, up`                | Move up                                  |
+| `app.bottom`                  | `G, end`               | Jump to the last row                     |
+| `app.top`                     | `home`                 | Jump to the first row                    |
+| `app.half_down`               | `ctrl+d, pagedown`     | Half a page down                         |
+| `app.half_up`                 | `ctrl+u, pageup`       | Half a page up                           |
+| `app.commands`                | `:`                    | Command palette                          |
+| `app.help`                    | `?`                    | Show or close the key help               |
+| `app.search`                  | `/`                    | Search every board on Trello             |
+| `app.quit`                    | `q`                    | Quit                                     |
+| `chord.top`                   | `g g`                  | Jump to the first row                    |
+| `chord.next_view`             | `g t`                  | Go to the next view                      |
+| `chord.previous_view`         | `g T`                  | Go to the previous view                  |
+| `card.move`                   | `m`                    | Move the card to another list            |
+| `card.comment`                | `c`                    | Write a comment                          |
+| `card.description`            | `e`                    | Edit the description                     |
+| `card.labels`                 | `t`                    | Put labels on the card or take them off  |
+| `card.checklist`              | `x`                    | Tick checklist items, add items          |
+| `card.attachments`            | `a`                    | Attachments: open, save, add             |
+| `card.reply`                  | `C`                    | Reply to a comment                       |
+| `card.react`                  | `R`                    | React to a comment                       |
+| `card.copy_link`              | `y`                    | Copy the card's link                     |
+| `card.copy_comment_link`      | `Y`                    | Copy the link to a comment               |
+| `card.open`                   | `o`                    | Open the card in the web browser         |
+| `card.follow_link`            | `L`                    | Follow a link on the card                |
+| `card.archive`                | `A`                    | Archive the card (asks first)            |
+| `card.delete`                 | `D`                    | Delete the card for good (asks first)    |
+| `card.edit_comment`           | `E`                    | Edit one of your comments                |
+| `card.delete_comment`         | `d`                    | Delete one of your comments (asks first) |
+| `list.filter`                 | `f`                    | Filter the cards on screen               |
+| `list.clear_filter`           | `esc`                  | Clear the filter                         |
+| `list.new_card`               | `n`                    | Make a new card                          |
+| `list.open`                   | `l, right`             | Open the card                            |
+| `board.copy_link`             | `B`                    | Copy the board's link                    |
+| `browser.in`                  | `l, right`             | Into the cards; open a card              |
+| `browser.out`                 | `h, left`              | Back to the lists                        |
+| `triage.sort`                 | `s`                    | Cycle the sort                           |
+| `mywork.preview`              | `p`                    | Show or hide the preview                 |
+| `card_screen.back`            | `esc, q, h, left`      | Close the card                           |
+| `notifications.mark_read`     | `d`                    | Mark the notification read               |
+| `notifications.mark_all_read` | `D`                    | Mark every notification read             |
+| `notifications.toggle_read`   | `u`                    | Hide or show the ones you've read        |
+| `help.close`                  | `esc, q`               | Close the key help                       |
+| `help.all`                    | `a`                    | Every key, or just this view's           |
+| `preview.close`               | `esc, q`               | Close the link preview                   |
+| `preview.follow`              | `enter`                | Follow the link                          |
+| `popup.open_in_browser`       | `ctrl+o`               | Open the link in the web browser         |
+| `popup.copy_link`             | `ctrl+y`               | Copy the link                            |
+| `popup.preview`               | `alt+p`                | Preview the highlighted link or result   |
+| `picker.close`                | `esc`                  | Close the popup                          |
+| `picker.down`                 | `ctrl+j, down, ctrl+n` | Next row                                 |
+| `picker.up`                   | `ctrl+k, up, ctrl+p`   | Previous row                             |
+| `attachments.save`            | `ctrl+s`               | Save the attachment to Downloads         |
+| `editor.cancel`               | `esc`                  | Close the editor (a draft is kept)       |
+| `editor.enter`                | `enter`                | Send (a new line in a description)       |
+| `editor.save`                 | `ctrl+s`               | Save                                     |
+| `editor.mention`              | `tab`                  | Pick the @mention                        |
+| `editor.mention_down`         | `down`                 | Next @mention                            |
+| `editor.mention_up`           | `up`                   | Previous @mention                        |
+| `editor.newline`              | `alt+enter, ctrl+j`    | Start a new line                         |
+| `editor.attach`               | `ctrl+o`               | Attach a file                            |
+| `confirm.yes`                 | `y`                    | Confirm                                  |
+| `confirm.no`                  | `n, esc`               | Cancel                                   |
+<!-- /keys-table -->
 
 ## Development
 

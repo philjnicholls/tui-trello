@@ -368,7 +368,7 @@ async def test_card_commands_find_a_shortcode_word() -> None:
 
 def test_attachment_names_show_emoji() -> None:
     shown = []
-    stub = SimpleNamespace(KEY_HINTS=True, query=lambda _: SimpleNamespace(set_class=lambda *_: None),
+    stub = SimpleNamespace(KEY_HINTS=True, app=None, query=lambda _: SimpleNamespace(set_class=lambda *_: None),
                            query_one=lambda *_: SimpleNamespace(update=shown.append))
     CardView.show_attachments(stub, [Attachment("a1", ":tada: notes.pdf", "https://e.com/n", True)])
     assert "🎉 notes.pdf" in printed(shown[0])
