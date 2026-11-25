@@ -33,7 +33,7 @@ from tui_trello.config import config_path
 
 # tui-trello's OAuth 2.0 client, on https://trello.com/power-ups/admin. Its callback URLs must include
 # http://127.0.0.1:<oauth_port>/callback and its scopes must include SCOPES.
-OAUTH_CLIENT_ID = "HC8mAiNs8Ya9B5eRH9OaaLW1RZdpeoX3"
+OAUTH_CLIENT_ID = "gGrXO7ZLRFrZ00UM9irqMjhBGAhIByaI"
 OAUTH_AUTHORIZE_URL = "https://auth.atlassian.com/authorize"
 OAUTH_TOKEN_URL = "https://auth.atlassian.com/oauth/token"
 # write:member:trello is for marking notifications read: Trello refuses that with the board scopes alone, even
