@@ -1,27 +1,33 @@
 """End-to-end flows driven through the keyboard, against the demo backend."""
 
 import asyncio
+import io
 import json
+import re
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 from rich.color import Color
+from rich.console import Console
 from rich.text import Text
 from textual._xterm_parser import XTermParser
-from textual.widgets import DataTable, OptionList, TextArea
+from textual.widgets import DataTable, Label, OptionList, TextArea
 
-from tui_trello import store as store_module
 from tui_trello.backend import BackendError
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
 from tui_trello.drafts import drafts_path
 from tui_trello.models import LABEL_COLOURS, CheckItem, Checklist
+from tui_trello.remote import RemoteFiles
 from tui_trello.ui import clipboard, keys_compat, render
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
 from tui_trello.ui.screens.keys import KeysScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
+from tui_trello.ui.screens.news import NewsScreen
 from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import (
     AttachmentPickerScreen,
@@ -39,6 +45,7 @@ from tui_trello.ui.screens.search import SearchScreen
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.tips import TIPS
 from tui_trello.ui.widgets.card_view import CardView
+from tui_trello.ui.widgets.news_badge import NewsBadge
 from tui_trello.ui.widgets.spinner import Spinner
 
 
@@ -119,6 +126,15 @@ async def test_my_work(app) -> None:
         assert screen.current_card() is not None
         await pilot.press("G")
         assert screen.current_card().name == names[-1]
+
+
+async def test_my_work_draws_against_the_fixed_clock(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await app.push_screen(MyWorkScreen(now=datetime.now(UTC) + timedelta(days=3650)))
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert "OVERDUE" in lines and "TODAY" not in lines and "THIS WEEK" not in lines
 
 
 async def test_move_from_my_work_updates_the_board(app) -> None:
@@ -557,7 +573,8 @@ async def test_reply_from_notifications(app) -> None:
         await pilot.pause()
         await pilot.press("C")  # Grace's mention, the newest
         await pilot.pause()
-        assert app.screen.query_one(TextArea).text == "> @ada can you check the picker remembers the last list?\n\n@grace "
+        assert app.screen.query_one(TextArea).text == (
+            "> @ada can you check the picker remembers the last list?\n\n@grace ")
         await pilot.press(*"yes", "enter")
         await pilot.pause()
         card_id = app.store.notifications[0].card_id
@@ -600,6 +617,15 @@ async def test_help_shows_the_keys_for_the_view(app) -> None:
         lines = "\n".join(screen_lines(app))
         assert "Keys in triage" in lines and "cycle sort" in lines and "move to another list" in lines
         assert "mark all read" not in lines and "show or hide the preview" not in lines
+
+
+async def test_notifications_draw_against_the_fixed_clock(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await app.push_screen(NotificationsScreen(now=datetime.now(UTC) + timedelta(days=300)))
+        await pilot.pause()
+        lines = "\n".join(screen_lines(app))
+        assert re.search(r"\b3\d\dd\b", lines) and not re.search(r"\b\d{1,2}[hm]\b", lines)
 
 
 async def test_hiding_read_notifications_is_remembered(backend, state_dir) -> None:
@@ -670,7 +696,7 @@ async def test_copy_and_open_board_link(app, monkeypatch) -> None:
 async def test_attachments(app, monkeypatch, tmp_path) -> None:
     opened: list[str] = []
     monkeypatch.setattr("webbrowser.open", opened.append)
-    monkeypatch.setattr(store_module, "download_dir", lambda: tmp_path / "Downloads")
+    monkeypatch.chdir(tmp_path)  # a file saved anywhere near would show up here
     async with app.run_test(size=(120, 60)) as pilot:
         await pilot.pause()
         await pilot.press("j", "j", "l")  # Doing: Move cards between lists, a file and a link
@@ -682,12 +708,29 @@ async def test_attachments(app, monkeypatch, tmp_path) -> None:
         await pilot.press("a")
         await pilot.pause()
         assert isinstance(app.screen, AttachmentPickerScreen)
-        await pilot.press("ctrl+s")  # the file
+        await pilot.press("ctrl+s")  # the file: it says how to save it, and saves nothing
         await pilot.pause()
-        assert (tmp_path / "Downloads" / "picker-sketch.png").read_bytes().startswith(b"\x89PNG")
-        await pilot.press("ctrl+j", "enter")  # the link
+        assert isinstance(app.screen, AttachmentPickerScreen) and app.screen.highlighted().name == "picker-sketch.png"
+        [toast] = app._notifications
+        assert toast.message == AttachmentPickerScreen.SAVE_IN_BROWSER and toast.title == "Can't save picker-sketch.png"
+        assert toast.severity == "warning" and opened == [] and list(tmp_path.iterdir()) == []
+        await pilot.press("ctrl+j", "ctrl+s")  # the link
+        await pilot.pause()
+        assert [t.message for t in app._notifications][1:] == ["That's a link, not a file: enter opens it"]
+        await pilot.press("enter")
         await pilot.pause()
         assert opened == ["https://example.com/pr/42"] and not isinstance(app.screen, AttachmentPickerScreen)
+
+
+async def test_attachment_hint_names_no_save(app) -> None:
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await pilot.press("j", "j", "l", "a")
+        await pilot.pause()
+        assert isinstance(app.screen, AttachmentPickerScreen)
+        hint = app.screen.query_one(".hint", Label)
+        assert str(hint.render()).strip() == (
+            "enter: open in the browser (save files from there) · ctrl+y: copy link · paste a URL to attach it")
 
 
 async def test_attach_a_file_and_a_link(app, monkeypatch, tmp_path) -> None:
@@ -1559,8 +1602,7 @@ async def test_follow_link_to_another_board(app, backend) -> None:
         assert app.store.snapshot.board.id == "b-arabic"
 
 
-async def test_follow_attachment_link(app, monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(store_module, "download_dir", lambda: tmp_path / "Downloads")
+async def test_follow_attachment_link(app) -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         await on_links_card(app, pilot)
         await pilot.press("L")
@@ -1571,7 +1613,8 @@ async def test_follow_attachment_link(app, monkeypatch, tmp_path) -> None:
         assert app.screen.highlighted().name == "picker-sketch.png"
         await pilot.press("ctrl+s")
         await settle(pilot)
-        assert (tmp_path / "Downloads" / "picker-sketch.png").read_bytes().startswith(b"\x89PNG")
+        [toast] = app._notifications
+        assert toast.message == AttachmentPickerScreen.SAVE_IN_BROWSER and toast.title == "Can't save picker-sketch.png"
 
 
 async def test_follow_attachment_link_highlights_that_attachment(app, backend, tmp_path) -> None:
@@ -3291,3 +3334,141 @@ async def test_demo_comments_keep_the_count_in_step(app, backend) -> None:
     card = card_named(backend, "Keyboard shortcut cheat sheet")
     await backend.add_comment(card.id, "hi")
     assert card_named(backend, card.name).comment_count == card.comment_count + 1
+
+
+# -- news from tui-trello's repository ------------------------------------------------------------------------
+
+NEWSFEED = "## 2026-02-01: Plain news\n\nSee [the repo](https://example.com).\n"
+
+
+def rendered_text(renderable) -> str:
+    console = Console(width=100, file=io.StringIO(), record=True)
+    console.print(renderable)
+    return console.export_text()
+
+
+async def remote_checked(app) -> None:
+    """Wait for the background check of tui-trello's news to finish."""
+    for worker in [w for w in app.workers if w.group == "remote"]:
+        await worker.wait()
+
+
+def news_app(tmp_path, backend, newsfeed: str = NEWSFEED, hold: asyncio.Event | None = None) -> TrelloApp:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if hold is not None:
+            await hold.wait()
+        if request.url.path.endswith("newsfeed.md"):
+            return httpx.Response(200, text=newsfeed)
+        return httpx.Response(404)
+
+    files = RemoteFiles(tmp_path / "remote", httpx.MockTransport(handler))
+    return TrelloApp(backend, Settings(default_board="b-product", notify_interval=0), remote=files)
+
+
+async def test_app_starts_while_the_remote_fetch_hangs(tmp_path, backend) -> None:
+    hold = asyncio.Event()
+    app = news_app(tmp_path, backend, hold=hold)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert app.screen.query_one("#lists", OptionList).option_count > 0  # the board is on screen
+        assert not hold.is_set() and app.unseen_news == [] and toasts(app) == []
+        hold.set()
+
+
+async def test_unseen_news_shows_a_toast_and_the_badge(tmp_path, backend) -> None:
+    app = news_app(tmp_path, backend, "## 2026-02-01: One\n\nx\n\n## 2026-02-02: Two\n\ny\n")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await remote_checked(app)
+        await pilot.pause()
+        [toast] = [t for t in app._notifications if t.title == "News from tui-trello"]
+        assert toast.message == "Two and 1 more (N to read)" and not toast.markup
+        assert str(app.screen.query_one(NewsBadge).render()) == "✦ 2 news (N)"
+        app.check_remote()  # the same news again: no second toast
+        await remote_checked(app)
+        assert len([t for t in app._notifications if t.title == "News from tui-trello"]) == 1
+
+
+async def test_n_opens_the_news_and_marks_it_seen(tmp_path, backend, state_dir) -> None:
+    app = news_app(tmp_path, backend)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await remote_checked(app)
+        await pilot.pause()
+        assert len(app.unseen_news) == 1
+        await pilot.press("N")
+        await pilot.pause()
+        assert isinstance(app.screen, NewsScreen)
+        assert "Plain news" in rendered_text(app.screen.content())
+        assert app.unseen_news == [] and app.prefs.news_seen == ["2026-02-01: Plain news"]
+        assert str(app.screen_stack[-2].query_one(NewsBadge).render()) == ""
+        saved = json.loads((state_dir / "tui-trello" / "prefs.json").read_text())
+        assert saved["news_seen"] == ["2026-02-01: Plain news"]
+        await pilot.press("N")  # closes it
+        await pilot.pause()
+        assert not isinstance(app.screen, NewsScreen)
+        before = len(app._notifications)
+        app.check_remote()
+        await remote_checked(app)
+        assert len(app._notifications) == before  # nothing new: no toast
+
+
+async def test_news_links_are_not_hyperlinks(tmp_path, backend) -> None:
+    app = news_app(tmp_path, backend)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await remote_checked(app)
+        await pilot.pause()
+        await pilot.press("N")
+        await pilot.pause()
+        console = Console(width=100, file=io.StringIO(), force_terminal=True)
+        console.print(app.screen.content())
+        assert "\x1b]8;" not in console.file.getvalue()
+        plain = Console(width=100, file=io.StringIO())
+        plain.print(app.screen.content())
+        assert "the repo (https://example.com)" in plain.file.getvalue()
+
+
+async def test_a_failing_news_check_does_not_crash_the_app(tmp_path, backend, monkeypatch, caplog) -> None:
+    async def explode(self, force=False):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(RemoteFiles, "refresh", explode)
+    caplog.set_level("DEBUG", logger="tui_trello.ui.app")
+    app = news_app(tmp_path, backend)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await remote_checked(app)
+        await pilot.pause()
+        assert "news check failed" in caplog.text
+        assert app.is_running and app.screen.query_one("#lists", OptionList).option_count > 0
+
+
+async def test_the_notifications_screen_has_the_news_badge(tmp_path, backend) -> None:
+    app = news_app(tmp_path, backend)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await remote_checked(app)
+        await app.push_screen(NotificationsScreen())
+        await pilot.pause()
+        assert str(app.screen.query_one(NewsBadge).render()) == "✦ 1 news (N)"
+
+
+async def test_no_remote_means_no_badge_and_news_says_so(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        assert app.remote is None and app.unseen_news == []
+        assert str(app.screen.query_one(NewsBadge).render()) == ""
+        await pilot.press("N")
+        await pilot.pause()
+        assert isinstance(app.screen, NewsScreen)
+        text = rendered_text(app.screen.content())
+        assert "No news." in text and "News is turned off" in text
+
+
+async def test_news_text_is_not_markup(tmp_path, backend) -> None:
+    app = news_app(tmp_path, backend, "## 2026-02-01: A [bold]loud[/bold] title\n\nBody with [red]brackets[/red].\n")
+    async with app.run_test(size=(120, 30)) as pilot:
+        await remote_checked(app)
+        await pilot.pause()
+        [toast] = [t for t in app._notifications if t.title == "News from tui-trello"]
+        assert "A [bold]loud[/bold] title" in toast.message and not toast.markup
+        await pilot.press("N")
+        await pilot.pause()
+        text = rendered_text(app.screen.content())
+        assert "A [bold]loud[/bold] title" in text and "Last fetched" in text

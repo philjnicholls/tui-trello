@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rich.text import Text
 
@@ -32,7 +32,7 @@ def label_dots(labels: tuple[Label, ...]) -> Text:
 def due_text(card: Card, now: datetime | None = None) -> Text:
     if card.due is None:
         return Text("")
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     days = (card.due.date() - now.date()).days
     if card.due_complete:
         return Text(f"✓ {card.due:%d %b}", style="green")
@@ -121,7 +121,7 @@ def notification_summary(notification: Notification) -> str:
 def ago(date: datetime | None, now: datetime | None = None) -> str:
     if date is None:
         return ""
-    seconds = ((now or datetime.now(timezone.utc)) - date).total_seconds()
+    seconds = ((now or datetime.now(UTC)) - date).total_seconds()
     for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
         if seconds >= size:
             return f"{int(seconds // size)}{unit}"

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from tui_trello.models import BoardSnapshot, Card
 
@@ -19,7 +19,7 @@ Predicate = Callable[[Card, BoardSnapshot], bool]
 
 
 def _overdue(card: Card, snapshot: BoardSnapshot) -> bool:
-    return card.due is not None and not card.due_complete and card.due < datetime.now(timezone.utc)
+    return card.due is not None and not card.due_complete and card.due < datetime.now(UTC)
 
 
 FLAGS: dict[str, Predicate] = {

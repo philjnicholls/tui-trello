@@ -19,7 +19,6 @@ from textual.signal import Signal
 from tui_trello import links
 from tui_trello.backend import Backend, BackendError
 from tui_trello.drafts import Draft, Drafts, Kind, new_card_id
-from tui_trello.files import download_dir, unique_path
 from tui_trello.models import (
     Attachment,
     Board,
@@ -486,15 +485,6 @@ class Store:
         if card := self.find_card(card_id):
             count = len(self._attachments[card_id]) if card_id in self._attachments else card.attachment_count + 1
             self._replace(replace(card, attachment_count=count))
-
-    async def download_attachment(self, attachment: Attachment, directory: Path | None = None) -> Path:
-        """Save an uploaded file into the downloads directory (under a new name if it's taken); return where."""
-        directory = directory or download_dir()
-        directory.mkdir(parents=True, exist_ok=True)
-        dest = unique_path(directory, attachment.file_name or attachment.name)
-        async with self._busy("download"):
-            await self.backend.download_attachment(attachment, dest)
-        return dest
 
     async def labels(self, board_id: str) -> list[Label]:
         """A board's labels, sorted by name."""

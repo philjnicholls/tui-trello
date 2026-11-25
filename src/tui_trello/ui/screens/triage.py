@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rich.text import Text
 from textual import on
@@ -17,10 +17,11 @@ from tui_trello.ui.bidi import BidiText, visual
 from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar, index_of
 from tui_trello.ui.screens.picker import Choice
 from tui_trello.ui.widgets.bell import Bell
+from tui_trello.ui.widgets.news_badge import NewsBadge
 from tui_trello.ui.widgets.spinner import Spinner
 
-FAR_FUTURE = datetime.max.replace(tzinfo=timezone.utc)
-FAR_PAST = datetime.min.replace(tzinfo=timezone.utc)
+FAR_FUTURE = datetime.max.replace(tzinfo=UTC)
+FAR_PAST = datetime.min.replace(tzinfo=UTC)
 
 # name -> sort key; the first is the default
 SORTS = {
@@ -54,6 +55,7 @@ class TriageScreen(BoardScreen):
         with TopBar():
             yield Static(id="status")
             yield Bell()
+            yield NewsBadge()
             yield Spinner()
         yield Input(id="filter", placeholder=keymap.of(self.app).fill(FILTER_HELP))
         yield DataTable(id="body", cursor_type="row", zebra_stripes=True)

@@ -147,7 +147,7 @@ class PickerScreen(ModalScreen[T | None]):
             prompts = [to_content(c.text) if c.text else c.label for c in matches]
         extras = self.extras(query)
         self.shown = matches + extras
-        options.set_options([self.option(p, c) for p, c in zip(prompts, matches)]
+        options.set_options([self.option(p, c) for p, c in zip(prompts, matches, strict=True)]
                             + [self.option(c.label, c) for c in extras])
         options.highlighted = 0 if self.shown else None
 
@@ -566,11 +566,14 @@ class ChecklistPickerScreen(PickerScreen):
 
 class AttachmentPickerScreen(PickerScreen):
     """A card's attachments. Enter opens the highlighted one in the web browser: a link, or an upload, which
-    trello.com serves to the logged-in browser. ctrl+s saves an upload to the downloads directory, ctrl+y copies the
-    link. "attach a file" browses for one to upload; typing or pasting a URL offers to attach it as a link."""
+    trello.com serves to the logged-in browser. ctrl+s can't save an upload (Trello refuses downloads with the OAuth
+    login), so it says to open it in the browser instead; ctrl+y copies the link. "attach a file" browses for one
+    to upload; typing or pasting a URL offers to attach it as a link."""
 
-    HINT = ("enter: open in the browser · {attachments.save}: save to Downloads · {popup.copy_link}: copy link · "
+    HINT = ("enter: open in the browser (save files from there) · {popup.copy_link}: copy link · "
             "paste a URL to attach it")
+    SAVE_IN_BROWSER = ("Trello doesn't let apps save uploaded files with the OAuth login (tui-trello login). "
+                       "Press enter to open it in your web browser and save it from there.")
 
     BINDINGS = [
         Binding("ctrl+s", "save", "Save", show=False, id="attachments.save"),
@@ -640,19 +643,13 @@ class AttachmentPickerScreen(PickerScreen):
         self.choices = await self.attachment_choices()
         self.refilter()
 
-    @work(group="attachments")
-    async def action_save(self) -> None:
+    def action_save(self) -> None:
         if not (attachment := self.highlighted()):
             return
         if not attachment.is_upload:
             self.notify("That's a link, not a file: enter opens it")
             return
-        try:
-            path = await self.app.store.download_attachment(attachment)
-        except BackendError as exc:
-            self.notify(str(exc), severity="error", timeout=10)
-        else:
-            self.notify(str(path), title=f"Saved {attachment.name}")
+        self.notify(self.SAVE_IN_BROWSER, title=f"Can't save {attachment.name}", severity="warning", timeout=10)
 
     def action_copy_link(self) -> None:
         if attachment := self.highlighted():

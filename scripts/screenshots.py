@@ -1,15 +1,44 @@
 """Regenerate docs/screenshots/*.svg from the demo backend: `python scripts/screenshots.py`."""
 
 import asyncio
+import dataclasses
 import os
 import tempfile
 from pathlib import Path
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()  # keep any drafts away from the real ones
 
+from arabic_forms import shape
+
+from tui_trello.backend import demo
 from tui_trello.backend.demo import DemoBackend
 from tui_trello.config import Settings
 from tui_trello.ui.app import TrelloApp
+
+
+def shaped(value):
+    """`value` with every string in it, however deep, run through `shape`."""
+    match value:
+        case str():
+            return shape(value)
+        case list() | tuple():
+            return type(value)(shaped(item) for item in value)
+        case dict():
+            return {key: shaped(item) for key, item in value.items()}
+        case _:
+            return value
+
+
+def shape_demo_arabic() -> None:
+    """Join the demo's Arabic letters before any `DemoBackend` is built. The SVG holds each character in a `<text>`
+    element of its own, so a browser would draw every letter isolated; presentation forms are drawn as they are. Only
+    this script does it: the app leaves joining to the terminal."""
+    for name in [name for name in dir(demo) if name.startswith("ARABIC_")]:
+        setattr(demo, name, shaped(getattr(demo, name)))
+    member = demo.MEMBERS["m4"]
+    demo.MEMBERS["m4"] = dataclasses.replace(member, full_name=shape(member.full_name))
+    # The names notifications look cards up by, and the comments' authors, have to match the shaped ones.
+    demo.NOTIFICATIONS[:] = shaped(demo.NOTIFICATIONS)
 
 
 class SlowBackend(DemoBackend):
@@ -37,6 +66,7 @@ def save(app: TrelloApp, name: str) -> None:
 
 async def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
+    shape_demo_arabic()
     app = TrelloApp(DemoBackend(), Settings(default_board="b-product"))
     async with app.run_test(size=(130, 30)) as pilot:
 

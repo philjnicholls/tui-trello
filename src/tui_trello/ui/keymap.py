@@ -37,12 +37,13 @@ WHAT = {
     "app.done_items": "Show or hide ticked checklist items", "app.down": "Move down (any list, table or pane)",
     "app.up": "Move up", "app.bottom": "Jump to the last row", "app.top": "Jump to the first row",
     "app.half_down": "Half a page down", "app.half_up": "Half a page up", "app.commands": "Command palette",
-    "app.help": "Show or close the key help", "app.search": "Search every board on Trello", "app.quit": "Quit",
+    "app.help": "Show or close the key help", "app.search": "Search every board on Trello",
+    "app.news": "Show or close the news about tui-trello", "app.quit": "Quit",
     "chord.top": "Jump to the first row", "chord.next_view": "Go to the next view",
     "chord.previous_view": "Go to the previous view",
     "card.move": "Move the card to another list", "card.comment": "Write a comment",
     "card.description": "Edit the description", "card.labels": "Put labels on the card or take them off",
-    "card.checklist": "Tick checklist items, add items", "card.attachments": "Attachments: open, save, add",
+    "card.checklist": "Tick checklist items, add items", "card.attachments": "Attachments: open, add",
     "card.reply": "Reply to a comment", "card.react": "React to a comment", "card.copy_link": "Copy the card's link",
     "card.copy_comment_link": "Copy the link to a comment", "card.open": "Open the card in the web browser",
     "card.follow_link": "Follow a link on the card", "card.archive": "Archive the card (asks first)",
@@ -55,11 +56,13 @@ WHAT = {
     "notifications.mark_read": "Mark the notification read",
     "notifications.mark_all_read": "Mark every notification read",
     "notifications.toggle_read": "Hide or show the ones you've read", "help.close": "Close the key help",
-    "help.all": "Every key, or just this view's", "preview.close": "Close the link preview",
+    "news.close": "Close the news", "help.all": "Every key, or just this view's",
+    "preview.close": "Close the link preview",
     "preview.follow": "Follow the link", "popup.open_in_browser": "Open the link in the web browser",
     "popup.copy_link": "Copy the link", "popup.preview": "Preview the highlighted link or result",
     "picker.close": "Close the popup", "picker.down": "Next row", "picker.up": "Previous row",
-    "attachments.save": "Save the attachment to Downloads", "editor.cancel": "Close the editor (a draft is kept)",
+    "attachments.save": "Say how to save the file (open it in the browser)",
+    "editor.cancel": "Close the editor (a draft is kept)",
     "editor.enter": "Send (a new line in a description)", "editor.save": "Save", "editor.mention": "Pick the @mention",
     "editor.mention_down": "Next @mention", "editor.mention_up": "Previous @mention",
     "editor.newline": "Start a new line", "editor.attach": "Attach a file", "confirm.yes": "Confirm",
@@ -79,6 +82,7 @@ GROUPS = {
     "card_screen": "the full-screen card",
     "notifications": "the notifications view",
     "help": "the key help",
+    "news": "the news popup",
     "preview": "the link preview popup",
     "popup": "popups that share a verb: links, search, preview",
     "picker": "every list popup",
@@ -263,6 +267,7 @@ def contexts() -> list[Context]:
     from tui_trello.ui.screens.card import CardScreen
     from tui_trello.ui.screens.keys import KeysScreen
     from tui_trello.ui.screens.mywork import MyWorkScreen
+    from tui_trello.ui.screens.news import NewsScreen
     from tui_trello.ui.screens.notifications import NotificationsScreen
     from tui_trello.ui.screens.picker import ConfirmScreen, PickerScreen, TextPromptScreen
     from tui_trello.ui.screens.preview import LinkPreviewScreen
@@ -275,7 +280,7 @@ def contexts() -> list[Context]:
         found.append(Context(name, app_bindings + class_bindings(cls), widget_keys(cls.FOCUS_WIDGETS), chords=True))
     # The app's bindings stop at a modal screen, but the chord handler runs before bindings.
     for name, cls in [("the link preview", LinkPreviewScreen), ("the key help", KeysScreen),
-                      ("the confirmation popup", ConfirmScreen)]:
+                      ("the news", NewsScreen), ("the confirmation popup", ConfirmScreen)]:
         found.append(Context(name, class_bindings(cls), widget_keys(getattr(cls, "FOCUS_WIDGETS", ())), chords=True))
     # The chord handler skips text boxes. A picker that adds no bindings is the same as `PickerScreen`.
     pickers = [PickerScreen]
@@ -515,7 +520,7 @@ def markdown_table(keymap: KeyMap | None = None) -> str:
     widths = [max(len(row[n]) for row in rows) for n in range(3)]
 
     def line(row: tuple[str, ...]) -> str:
-        return "| " + " | ".join(cell.ljust(width) for cell, width in zip(row, widths)) + " |"
+        return "| " + " | ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)) + " |"
 
     return "\n".join([line(rows[0]), "| " + " | ".join("-" * width for width in widths) + " |",
                       *(line(row) for row in rows[1:])])

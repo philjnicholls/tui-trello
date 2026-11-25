@@ -1,0 +1,70 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Don't paste tokens or private card content.** For a security problem, use the
+        [security policy](https://github.com/philjnicholls/tui-trello/security/policy) instead.
+  - type: input
+    id: version
+    attributes:
+      label: tui-trello version
+      description: Output of `tui-trello --version`
+      placeholder: tui-trello 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04, macOS 15
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      placeholder: GNOME Terminal, kitty, iTerm2
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: demo
+    attributes:
+      label: Does it happen with `tui-trello --demo`?
+      options:
+        - "Yes"
+        - "No"
+        - "Haven't tried"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `tui-trello --demo`
+        2. Press ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include any error message or traceback.
+    validations:
+      required: true

@@ -50,12 +50,12 @@ from tui_trello.ui.screens.picker import (
 
 class TopBar(Horizontal):
     """The one-line bar at the top of every screen: a `Static` the screen writes its status in, a `Bell` (the unread
-    notification count), then a `Spinner`, which is the app's only loading indicator."""
+    notification count), a `NewsBadge`, then a `Spinner`, which is the app's only loading indicator."""
 
     DEFAULT_CSS = """
     TopBar { height: 1; background: $panel; }
     TopBar > Static { width: 1fr; padding: 0 1; }
-    TopBar > Spinner, TopBar > Bell { width: auto; }
+    TopBar > Spinner, TopBar > Bell, TopBar > NewsBadge { width: auto; }
     """
 
 

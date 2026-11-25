@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rich.text import Text
 from textual import on, work
@@ -22,6 +22,7 @@ from tui_trello.ui.screens.base import FILTER_HELP, ListScreen, TopBar
 from tui_trello.ui.screens.picker import Choice
 from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.card_view import CardView
+from tui_trello.ui.widgets.news_badge import NewsBadge
 from tui_trello.ui.widgets.spinner import Spinner
 
 GROUP_STYLES = {"Overdue": "bold red", "Today": "bold yellow", "Done": "bold green"}
@@ -60,6 +61,7 @@ class MyWorkScreen(ListScreen):
         with TopBar():
             yield Static(id="status")
             yield Bell()
+            yield NewsBadge()
             yield Spinner()
         yield Input(id="filter", placeholder=keymap.of(self.app).fill(FILTER_HELP))
         with Horizontal(id="body"):
@@ -92,7 +94,7 @@ class MyWorkScreen(ListScreen):
     def redraw(self) -> None:
         if not (work := self.snapshot):
             return
-        now = self.now or datetime.now(timezone.utc)
+        now = self.now or datetime.now(UTC)
         current = self.current_card()
         cards = self.card_query.filter(work)
         groups = agenda(cards, now)
@@ -181,7 +183,8 @@ class MyWorkScreen(ListScreen):
         lists = sorted(work.lists.values(), key=lambda lst: (
             not current or lst.board_id != current.board_id, work.board_named(lst.board_id).lower(), lst.pos))
         locations = [work.list_location(lst) for lst in lists]
-        choices = [Choice(with_emoji(location), lst, search=location) for location, lst in zip(locations, lists)]
+        choices = [Choice(with_emoji(location), lst, search=location)
+                   for location, lst in zip(locations, lists, strict=True)]
         return await self.pick_list("New card on which list?", choices)
 
     def select_card(self, card_id: str) -> None:

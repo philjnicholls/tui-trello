@@ -1,9 +1,13 @@
 """`cli.main` start-up: argument checks, without starting the interface or touching the network."""
 
+import json
+import time
+
 import pytest
 
-from tui_trello import cli
+from tui_trello import __version__, auth, cli
 from tui_trello.backend.demo import DemoBackend
+from tui_trello.remote import RemoteFiles
 from tui_trello.ui.app import TrelloApp
 
 CARD_URL = "https://trello.example/c/id12"
@@ -19,7 +23,7 @@ KINDS = {
 def isolated(tmp_path, monkeypatch):
     """No user config.toml, and no real login."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    for name in ("TRELLO_BOARD", "TRELLO_TOKEN", "TUI_TRELLO_LAYOUT"):
+    for name in ("TRELLO_BOARD", "TUI_TRELLO_LAYOUT", "TRELLO_TOKEN", "TRELLO_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -51,7 +55,7 @@ def test_open_rejects_a_web_url(started, capsys) -> None:
 
 
 @pytest.mark.parametrize(
-    "url", ["", "https://example.com/x", "trello.com/c/abc", "nVTbsQMq", "https://trello.com/u/phil"]
+    "url", ["", "https://example.com/x", "trello.com/c/abc", "Qr56St78", "https://trello.com/u/ada"]
 )
 def test_open_rejects_a_bad_url_before_logging_in(url, started, logins) -> None:
     with pytest.raises(SystemExit) as exit_:
@@ -96,7 +100,7 @@ def test_open_accepts_each_kind(kind, started) -> None:
 
 
 def test_open_with_real_trello_uses_trello_hosts(started, logins) -> None:
-    cli.main(["--open", "https://trello.com/c/nVTbsQMq/5741-x"])
+    cli.main(["--open", "https://trello.com/c/Qr56St78/5741-x"])
     assert len(logins) == 1 and started[0].open_url.endswith("5741-x")
 
 
@@ -127,6 +131,15 @@ def test_keys_reports_problems(tmp_path, capsys) -> None:
     assert 'card.delete = "ctrl+x"' in captured.out and "(default: D)" in captured.out
 
 
+def test_keys_ignores_retired_settings(tmp_path, monkeypatch, capsys) -> None:
+    """CR42: only [keys] problems make `keys` complain."""
+    monkeypatch.setenv("TRELLO_TOKEN", "T")
+    write_config(tmp_path, '[trello]\ntoken = "T"\n')
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["keys"])
+    assert exit_.value.code == 0 and capsys.readouterr().err == ""
+
+
 def test_keys_marks_an_override_and_exits_clean(tmp_path, capsys) -> None:
     write_config(tmp_path, '[keys]\ncard.archive = "ctrl+a"\n')
     with pytest.raises(SystemExit) as exit_:
@@ -144,3 +157,71 @@ def test_keys_output_is_a_valid_config(tmp_path, capsys) -> None:
     with pytest.raises(SystemExit) as exit_:
         cli.main(["keys"])
     assert exit_.value.code == 0 and capsys.readouterr().err == ""
+
+
+def test_version_prints_the_version_and_exits(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["--version"])
+    assert exit_.value.code == 0
+    assert capsys.readouterr().out == f"tui-trello {__version__}\n" and __version__ == "0.1.0"
+
+
+# -- login ----------------------------------------------------------------------------------------------------------
+
+
+def test_login_token_is_rejected(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_:
+        cli.main(["login", "--token"])
+    assert exit_.value.code == 2 and "unrecognized arguments" in capsys.readouterr().err
+
+
+def test_a_retired_login_says_so_and_starts_the_browser_login(monkeypatch, capsys) -> None:
+    logins: list[int] = []
+    tokens = auth.OAuth2Tokens("A", "R", time.time() + 3600)
+
+    async def login_oauth2(**kwargs):
+        logins.append(kwargs["port"])
+        return tokens
+
+    async def whoami(auth_, transport=None):
+        return "Ada Lovelace (@ada)"
+
+    monkeypatch.setattr(auth, "login_oauth2", login_oauth2)
+    monkeypatch.setattr(auth, "whoami", whoami)
+    monkeypatch.setattr("tui_trello.backend.trello.TrelloBackend", lambda auth_: auth_)
+    path = auth.credentials_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"token": "T"}))
+    backend = cli.trello_backend(cli.Settings())
+    out = capsys.readouterr().out
+    assert out.count(auth.RETIRED_LOGIN) == 1 and "Not logged in" not in out
+    assert logins == [8765] and isinstance(backend, auth.OAuth2Auth) and backend.tokens == tokens
+    assert auth.load_credentials() == tokens and not auth.retired_login()  # replaced: the message won't come back
+
+
+def test_retired_settings_are_named_before_a_login_starts(monkeypatch, capsys) -> None:
+    """CR41: a user with an old token is told why they are asked to log in."""
+    monkeypatch.setenv("TRELLO_TOKEN", "T")
+    monkeypatch.setattr(cli, "cmd_login", lambda settings: 1)
+    with pytest.raises(SystemExit):
+        cli.trello_backend(cli.Settings.load())
+    err = capsys.readouterr().err
+    assert "TRELLO_TOKEN is set but no longer used" in err
+
+
+def test_no_remote_makes_no_request(started, monkeypatch) -> None:
+    monkeypatch.setattr(RemoteFiles, "refresh", lambda *a, **k: pytest.fail("fetched with --no-remote"))
+    cli.main(["--no-remote", "--demo"])
+    assert started[0].remote is None and started[0].unseen_news == []
+
+
+def test_remote_disabled_in_config_makes_no_request(tmp_path, started, monkeypatch) -> None:
+    write_config(tmp_path, "[remote]\nenabled = false\n")
+    monkeypatch.setattr(RemoteFiles, "refresh", lambda *a, **k: pytest.fail("fetched with [remote] disabled"))
+    cli.main(["--demo"])
+    assert started[0].remote is None
+
+
+def test_remote_is_on_by_default(started) -> None:
+    cli.main(["--demo"])
+    assert isinstance(started[0].remote, RemoteFiles)

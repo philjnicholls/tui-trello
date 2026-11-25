@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from tui_trello.models import Attachment, Card, CheckItem, Checklist, Comment, Notification, checklist_badge
 
@@ -17,7 +17,7 @@ def test_card_from_api() -> None:
     })
     assert card.desc == ""
     assert card.labels[0].rich_colour == "red"
-    assert card.due == datetime(2026, 11, 20, 17, tzinfo=timezone.utc)
+    assert card.due == datetime(2026, 11, 20, 17, tzinfo=UTC)
     assert card.comment_count == 2
     assert card.checklist == (1, 4)
     assert card.attachment_count == 3

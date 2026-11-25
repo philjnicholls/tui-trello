@@ -7,17 +7,15 @@ from urllib.parse import parse_qsl, urlsplit
 import httpx
 import pytest
 
+from conftest import bearer_auth
 from tui_trello.auth import (
-    LegacyToken,
     LoginError,
     OAuth2Auth,
     OAuth2Tokens,
-    TokenAuth,
-    authorize_url,
     load_credentials,
     login_oauth2,
-    login_token,
     pkce_pair,
+    retired_login,
     save_credentials,
     whoami,
 )
@@ -27,19 +25,10 @@ FRESH = OAuth2Tokens("ACCESS", "REFRESH", time.time() + 3600)
 EXPIRED = OAuth2Tokens("OLD", "REFRESH", time.time() - 10)
 
 
-def test_token_auth_adds_query_params() -> None:
-    requests: list[httpx.Request] = []
-    transport = httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(200, json=[]))
-    with httpx.Client(auth=TokenAuth("KEY", "TOKEN"), transport=transport) as http:
-        http.get("https://api.trello.com/1/members/me/boards", params={"fields": "name"})
-    assert dict(requests[0].url.params) == {"fields": "name", "key": "KEY", "token": "TOKEN"}
-
-
-@pytest.mark.parametrize("credentials", [LegacyToken("t"), FRESH])
-def test_credentials_saved_private(tmp_path, credentials) -> None:
-    path = save_credentials(credentials, tmp_path / "credentials.json")
+def test_credentials_saved_private(tmp_path) -> None:
+    path = save_credentials(FRESH, tmp_path / "credentials.json")
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert load_credentials(path) == credentials
+    assert load_credentials(path) == FRESH
 
 
 def test_credentials_resaved_private(tmp_path) -> None:
@@ -231,29 +220,29 @@ async def test_login_oauth2_denied(unused_tcp_port: int) -> None:
                            open_browser=lambda url: asyncio.ensure_future(browser(url)))
 
 
-async def test_login_token() -> None:
-    opened: list[str] = []
-    credentials = await login_token("KEY", open_browser=opened.append, echo=lambda _: None, ask=lambda _: " T\n")
-    assert credentials == LegacyToken("T")
-    assert dict(parse_qsl(urlsplit(opened[0]).query))["key"] == "KEY"
-    assert authorize_url("KEY") == opened[0]
-
-
 async def test_whoami() -> None:
     assert await whoami(OAuth2Auth(FRESH, on_refresh=lambda _: None), httpx.MockTransport(FakeTrello())) \
         == "Ada Lovelace (@ada)"
-    bad_key = httpx.MockTransport(lambda request: httpx.Response(401, text="invalid key"))
-    with pytest.raises(LoginError, match="API key"):
-        await whoami(TokenAuth("KEY", "T"), bad_key)
+    unauthorised = httpx.MockTransport(lambda request: httpx.Response(401, text="unauthorized"))
+    with pytest.raises(LoginError, match="401"):
+        await whoami(bearer_auth(), unauthorised)
     server_error = httpx.MockTransport(lambda request: httpx.Response(503, text="down"))
     with pytest.raises(LoginError, match="503"):
-        await whoami(TokenAuth("KEY", "T"), server_error)
+        await whoami(bearer_auth(), server_error)
 
 
-def test_hand_set_token_wins_over_saved_login(monkeypatch) -> None:
-    from tui_trello import auth, cli
-    from tui_trello.config import Settings
+def test_a_retired_login_is_recognised_not_loaded(tmp_path) -> None:
+    path = tmp_path / "credentials.json"
+    path.write_text(json.dumps({"token": "T"}))
+    assert load_credentials(path) is None
+    assert retired_login(path)
+    assert json.loads(path.read_text()) == {"token": "T"}  # left as it was: only a new login replaces it
 
-    monkeypatch.setattr(auth, "load_credentials", lambda: FRESH)
-    backend = cli.trello_backend(Settings(token="HAND"))
-    assert isinstance(backend._http.auth, TokenAuth) and backend._http.auth.params["token"] == "HAND"
+
+def test_oauth_credentials_are_not_a_retired_login(tmp_path) -> None:
+    path = save_credentials(FRESH, tmp_path / "credentials.json")
+    assert not retired_login(path) and load_credentials(path) == FRESH
+    for content in ("", "[]", '{"token": ""}', '{"access_token": "A", "token": "T"}', "{}"):
+        path.write_text(content)
+        assert not retired_login(path), content
+    assert not retired_login(tmp_path / "missing.json")

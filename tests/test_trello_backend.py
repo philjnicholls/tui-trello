@@ -1,9 +1,7 @@
 import httpx
 import pytest
 
-from tui_trello.models import Attachment
-
-from tui_trello.auth import TokenAuth
+from conftest import bearer_auth
 from tui_trello.backend import BackendError
 from tui_trello.backend.trello import CARD_FIELDS, TrelloBackend
 
@@ -55,7 +53,7 @@ def make_backend(requests: list[httpx.Request], status: int = 200) -> TrelloBack
         requests.append(request)
         return httpx.Response(status, json=PAYLOADS.get(request.url.path, {}))
 
-    return TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    return TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
 
 
 async def test_board_snapshot() -> None:
@@ -66,7 +64,18 @@ async def test_board_snapshot() -> None:
     assert [c.id for c in snapshot.cards] == ["c1"]  # c2's list is archived
     assert not any(c.closed for c in snapshot.cards)
     assert snapshot.members["m1"].initials == "AL"
-    assert all(r.url.params["key"] == "KEY" and r.url.params["token"] == "TOKEN" for r in requests)
+
+
+async def test_requests_carry_a_bearer_token_and_no_key() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    await backend.board_snapshot("b1")
+    await backend.comments("c1")
+    await backend.notifications()
+    assert {r.url.path for r in requests} >= {"/1/boards/b1", "/1/cards/c1/actions", "/1/members/me/notifications"}
+    for request in requests:
+        assert request.headers["authorization"] == "Bearer ACCESS"
+        assert not {"key", "token"} & set(request.url.params)
 
 
 async def test_move_card() -> None:
@@ -113,7 +122,7 @@ async def test_attachments(tmp_path) -> None:
         listed = PAYLOADS["/1/cards/c1/attachments"]
         return httpx.Response(200, json=listed if request.method == "GET" else listed[0])
 
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    backend = TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
     [attachment] = await backend.attachments("c1")
     assert (attachment.name, attachment.is_upload) == ("notes.txt", True)
     assert "isUpload" in requests[-1].url.params["fields"]
@@ -121,7 +130,8 @@ async def test_attachments(tmp_path) -> None:
     path.write_bytes(b"%PDF-1.7 plan")
     await backend.attach_file("c1", path)
     upload = requests[-1]
-    assert (upload.method, upload.url.path, upload.url.params["name"]) == ("POST", "/1/cards/c1/attachments", "plan.pdf")
+    assert (upload.method, upload.url.path, upload.url.params["name"]) == (
+        "POST", "/1/cards/c1/attachments", "plan.pdf")
     assert upload.headers["content-type"].startswith("multipart/form-data")
     body = upload.read()
     assert b'name="file"; filename="plan.pdf"' in body and b"%PDF-1.7 plan" in body and b"application/pdf" in body
@@ -129,34 +139,8 @@ async def test_attachments(tmp_path) -> None:
     assert requests[-1].url.params["url"] == "https://example.com/pr/42" and "name" not in requests[-1].url.params
 
 
-async def test_download_with_a_token_login(tmp_path) -> None:
-    """Trello's download links want the key and token in an OAuth header, not the query string."""
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, content=b"hello")
-
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
-    attachment = Attachment("at1", "notes.txt", "https://trello.com/1/cards/c1/attachments/at1/download/notes.txt",
-                            is_upload=True)
-    await backend.download_attachment(attachment, tmp_path / "notes.txt")
-    assert (tmp_path / "notes.txt").read_bytes() == b"hello"
-    assert seen[0].headers["authorization"] == 'OAuth oauth_consumer_key="KEY", oauth_token="TOKEN"'
-
-
-async def test_download_refused_leaves_no_file(tmp_path) -> None:
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(
-        lambda request: httpx.Response(401, text="unauthorized permission requested")))
-    attachment = Attachment("at1", "notes.txt", "https://trello.com/1/cards/c1/attachments/at1/download/notes.txt",
-                            is_upload=True)
-    with pytest.raises(BackendError, match="login --token"):
-        await backend.download_attachment(attachment, tmp_path / "notes.txt")
-    assert not (tmp_path / "notes.txt").exists()
-
-
 async def test_no_permission() -> None:
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(
+    backend = TrelloBackend(bearer_auth(), transport=httpx.MockTransport(
         lambda request: httpx.Response(401, text="unauthorized permission requested")))
     with pytest.raises(BackendError, match="don't have access"):
         await backend.comments("c1")
@@ -186,7 +170,7 @@ async def test_notifications() -> None:
 
 async def test_marking_read_without_the_scope() -> None:
     """A login from before write:member:trello was asked for: Trello says 403, the app says log in again."""
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(
+    backend = TrelloBackend(bearer_auth(), transport=httpx.MockTransport(
         lambda request: httpx.Response(403, text="unauthorized notification requested.")))
     with pytest.raises(BackendError, match="tui-trello login"):
         await backend.mark_notifications_read(["n1"])
@@ -226,7 +210,7 @@ def failing_with(error: Exception) -> TrelloBackend:
     def handler(request: httpx.Request) -> httpx.Response:
         raise error
 
-    return TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    return TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
 
 
 @pytest.mark.parametrize(("backend", "unsure"), [
@@ -380,7 +364,7 @@ async def test_search_cards_lists_open_before_archived() -> None:
         found = open_ if "is:archived" in request.url.params["query"] else archived  # the archived come first
         return httpx.Response(200, json={"cards": found})
 
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    backend = TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
     hits = await backend.search_cards("passp")
     assert [bool(h.archived) for h in hits] == [False] * len(open_) + [True] * len(archived)
 
@@ -394,7 +378,7 @@ async def test_search_cards_survives_one_failing_request() -> None:
             return httpx.Response(500, json={})
         return httpx.Response(200, json=PAYLOADS["/1/search"])
 
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    backend = TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
     assert await backend.search_cards("passp")
 
 

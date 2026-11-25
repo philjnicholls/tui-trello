@@ -10,7 +10,6 @@ from typing import Any
 
 import httpx
 
-from tui_trello.auth import TokenAuth
 from tui_trello.backend import BackendError
 from tui_trello.models import (
     Attachment,
@@ -47,8 +46,7 @@ NOT_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout, httpx.U
 
 class TrelloBackend:
     def __init__(self, auth: httpx.Auth, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
-        """`auth` comes from `tui_trello.auth.request_auth`: `OAuth2Auth`, or `TokenAuth` after `login --token`."""
-        self._auth = auth
+        """`auth` is an `OAuth2Auth` (tui_trello.auth)."""
         self._http = httpx.AsyncClient(base_url=API_ROOT, auth=auth, timeout=20, transport=transport)
 
     async def _request(self, method: str, path: str, *, body: dict[str, Any] | None = None,
@@ -62,9 +60,6 @@ class TrelloBackend:
             # Only an error before the request went out is sure not to have reached Trello.
             unsure = not isinstance(exc, NOT_SENT)
             raise BackendError(f"Could not reach Trello: {exc}", unsure=unsure) from exc
-        if response.status_code in (400, 401) and "invalid key" in response.text:
-            raise BackendError("Trello doesn't recognise the app's API key; it may have been deleted or regenerated. "
-                               "Set a current one as APP_API_KEY in tui_trello/auth.py (or api_key in the config).")
         if response.status_code == 403 and "unauthorized notification" in response.text:
             raise BackendError("Marking notifications read needs a permission your login doesn't have yet. "
                                "Run `tui-trello login` again.")
@@ -263,32 +258,6 @@ class TrelloBackend:
     async def attach_link(self, card_id: str, url: str, name: str = "") -> Attachment:
         params = {"url": url, **({"name": name} if name else {})}
         return Attachment.from_api(await self._request("POST", f"/cards/{card_id}/attachments", **params))
-
-    async def download_attachment(self, attachment: Attachment, dest: Path) -> None:
-        """Save an uploaded file. Trello's download links take the older key and token, in an OAuth header; no
-        OAuth 2.0 scope covers them, so with the browser login they answer 401."""
-        headers = {}
-        if isinstance(self._auth, TokenAuth):
-            key, token = self._auth.params["key"], self._auth.params["token"]
-            headers["Authorization"] = f'OAuth oauth_consumer_key="{key}", oauth_token="{token}"'
-        try:
-            async with self._http.stream("GET", attachment.url, headers=headers, timeout=httpx.Timeout(20, read=600),
-                                         follow_redirects=True) as response:
-                if response.status_code in (401, 403):
-                    raise BackendError("Trello doesn't let the browser login download attachments. Open it in the "
-                                       "web browser instead (enter), or log in with `tui-trello login --token` to "
-                                       "save files from the app.")
-                if response.is_error:
-                    raise BackendError(f"Trello returned {response.status_code} for {attachment.name}")
-                with dest.open("wb") as out:
-                    async for chunk in response.aiter_bytes():
-                        out.write(chunk)
-        except httpx.HTTPError as exc:
-            dest.unlink(missing_ok=True)
-            raise BackendError(f"Could not download {attachment.name}: {exc}") from exc
-        except BaseException:
-            dest.unlink(missing_ok=True)  # no half-written file left behind
-            raise
 
     async def notifications(self) -> list[Notification]:
         # reactions: on a reactionAdded notification, the emoji given. Unlike data, it only comes if named here.

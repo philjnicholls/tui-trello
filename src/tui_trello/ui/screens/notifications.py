@@ -3,7 +3,7 @@ D marks them all; C replies to a comment. Read ones are hidden until u shows the
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rich.console import Console
 from rich.text import Text
@@ -21,6 +21,7 @@ from tui_trello.ui import keymap, markdown, render
 from tui_trello.ui.bidi import fit
 from tui_trello.ui.follow import show_card
 from tui_trello.ui.screens.base import TopBar, reply_to
+from tui_trello.ui.widgets.news_badge import NewsBadge
 from tui_trello.ui.widgets.spinner import Spinner
 
 AGO_WIDTH = 4
@@ -64,6 +65,7 @@ class NotificationsScreen(Screen):
     def compose(self) -> ComposeResult:
         with TopBar():
             yield Static(id="status")
+            yield NewsBadge()
             yield Spinner()
         yield OptionList(id="notifications")
         yield Footer()
@@ -82,7 +84,7 @@ class NotificationsScreen(Screen):
         store = self.app.store
         if store.notifications is None:
             return
-        now = self.now or datetime.now(timezone.utc)
+        now = self.now or datetime.now(UTC)
         current = self.current()
         self.shown = [n for n in store.notifications if n.unread or not self.unread_only]
         options = self.query_one("#notifications", OptionList)

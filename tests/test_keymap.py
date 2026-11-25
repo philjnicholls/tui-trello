@@ -56,7 +56,8 @@ def test_defaults_have_no_warnings() -> None:
     ("app.down", "j,down", "j,down"), ("app.help", "?", "question_mark"), ("popup.preview", "ctrl+/", "ctrl+slash"),
     ("card.delete", "shift+d", "D"), ("card.react", " ctrl+r ", "ctrl+r"), ("card.react", ",", "comma"),
     ("card.open", "F5", "f5"), ("card.open", "alt+enter", "alt+enter"), ("card.open", "ctrl++", "ctrl+plus"),
-    ("card.open", "space", "space"), ("list.clear_filter", "esc", "escape"), ("card.open", "ctrl+esc", "ctrl+escape"), ("card.open", ["ctrl+o", "ctrl+shift+left"], "ctrl+o,ctrl+shift+left"),
+    ("card.open", "space", "space"), ("list.clear_filter", "esc", "escape"), ("card.open", "ctrl+esc", "ctrl+escape"),
+    ("card.open", ["ctrl+o", "ctrl+shift+left"], "ctrl+o,ctrl+shift+left"),
 ])
 def test_override_and_value_forms(key_id, value, expected) -> None:
     built = KeyMap.build({key_id: value})
@@ -194,6 +195,16 @@ quit = "Q"
     assert settings.keys == {} and "[keys] must be a table" in settings.warnings[0]
     path.write_text("")
     assert Settings.load(path).keys == {}
+
+
+@pytest.mark.parametrize(("line", "remote", "warned"), [
+    ("enabled = false", False, False), ("enabled = true", True, False), ("", True, False),
+    ('enabled = "false"', False, True), ("enabled = 0", False, True)])
+def test_remote_enabled_accepts_only_booleans(tmp_path, line, remote, warned) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(f"[remote]\n{line}\n")
+    settings = Settings.load(path)
+    assert settings.remote is remote and bool(settings.warnings) is warned
 
 
 def test_flatten_keys() -> None:

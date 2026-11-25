@@ -1,4 +1,5 @@
 import pytest
+from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
@@ -9,11 +10,16 @@ from tui_trello.ui.bidi import BidiText, base_is_rtl, fit, has_rtl, visual
     ("plain english", "plain english"),
     ("مرحبا world", "world ابحرم"),
     ("Fix الصفحة الرئيسية now", "Fix ةيسيئرلا ةحفصلا now"),
-    ("خطأ 123 في النموذج", "جذومنلا يف 123 أطخ"),  # numbers stay left-to-right
+    ("خطأ 123 في النموذج", "جذومنلا يف 123 أطخ"),  # digits after Arabic letters (AN) still read left to right
     ("إصلاح (عاجل)", "(لجاع) حالصإ"),  # brackets are mirrored
     ("السعر: 1,000 €", "€ 1,000 :رعسلا"),
     ("50% خصم", "مصخ 50%"),
+    # Digits after an Arabic letter are Arabic numbers (rule W2), so W5 doesn't attach the % to them: it lands on
+    # the far side.
+    ("خصم 50%", "%50 مصخ"),
     ("تحديث API إلى الإصدار 2.5", "2.5 رادصإلا ىلإ API ثيدحت"),
+    ("الإصدار ٢٫٥ جاهز", "زهاج ٢٫٥ رادصإلا"),  # Arabic-Indic digits and the Arabic decimal separator
+    ("هل انتهيت؟ نعم، تماما", "امامت ،معن ؟تيهتنا له"),  # the Arabic question mark and comma
 ])
 def test_visual(logical: str, display: str) -> None:
     assert visual(logical).plain == display
@@ -96,6 +102,9 @@ def test_visual_keeps_emoji_whole(emoji: str) -> None:
 
 
 def test_visual_keeps_harakat_on_its_letter() -> None:
-    shalom = "كَتَبَ"  # kaf, teh and beh, each with a fatha
-    mashal = "بَ" + "تَ" + "كَ"  # the same clusters, last first
-    assert visual(shalom + " abc").plain == "abc " + mashal
+    kataba = "كَتَبَ"  # kaf, teh and beh, each with a fatha
+    assert visual(kataba + " abc").plain == "abc " + "بَ" + "تَ" + "كَ"  # each fatha still after its letter
+
+
+def test_harakat_take_no_cells() -> None:
+    assert cell_len("كَتَبَ") == 3

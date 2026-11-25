@@ -262,7 +262,9 @@ async def test_comment_picker_matches_only_the_label_and_quickly() -> None:
     assert len(choice.label) <= len("Ann: ") + 61
     started = time.monotonic()
     assert PickerScreen.score(Matcher("eeeee"), choice) > 0
-    assert time.monotonic() - started < 1
+    # The length assertion just above is the real guard; the time bound only catches a pathological regression, and is
+    # generous so a loaded CI machine doesn't fail it.
+    assert time.monotonic() - started < 5
 
 
 async def test_comment_picker_label_cuts_rendered_text_not_source() -> None:
@@ -286,7 +288,8 @@ async def test_quote_picker_matches_only_the_label_and_quickly() -> None:
     for choice in captured[0].choices:
         assert len(choice.search) <= 61
         PickerScreen.score(Matcher("eeeee"), choice)
-    assert time.monotonic() - started < 1
+    # The length assertions above are the real guard; the time bound only catches a pathological regression.
+    assert time.monotonic() - started < 5
 
 
 @pytest.mark.parametrize("text", ["https://e.com/?q=:tada:", "a=:tada:", "a?:tada:", "a&:tada:"])

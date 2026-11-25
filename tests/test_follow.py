@@ -6,19 +6,19 @@ import asyncio
 import httpx
 import pytest
 
-from tui_trello.auth import TokenAuth
+from conftest import bearer_auth
 from tui_trello.backend.trello import TrelloBackend
 from tui_trello.config import Settings
 from tui_trello.ui import follow
 from tui_trello.ui.app import TrelloApp
 from tui_trello.ui.screens.card import CardScreen
 
-URL = "https://trello.com/c/PAqU36DV"
+URL = "https://trello.com/c/Xy12Zw34"
 DESC = f"original ticket: [{URL}]({URL} \"smartCard-inline\")"
 OPEN_CARD = {"id": "c1", "name": "Consolidating", "idList": "l1", "idBoard": "b1", "desc": DESC,
-             "url": "https://trello.com/c/nVTbsQMq/consolidating", "badges": {"comments": 2}}
+             "url": "https://trello.com/c/Qr56St78/duplicate-report", "badges": {"comments": 2}}
 LINKED = {"id": "c2", "name": "original ticket", "idList": "l1", "idBoard": "b1", "closed": True,
-          "list": {"id": "l1", "closed": False}, "url": "https://trello.com/c/PAqU36DV/original-ticket"}
+          "list": {"id": "l1", "closed": False}, "url": "https://trello.com/c/Xy12Zw34/first-report"}
 OPEN_CARD_IN_ARCHIVED_LIST = {"closed": False, "idList": "l9", "list": {"id": "l9", "closed": True}}
 LIST = {"id": "l1", "name": "Doing", "idBoard": "b1", "pos": 1}
 PAYLOADS = {
@@ -45,7 +45,7 @@ def trello_app(extra: dict, requests: list[str], hold: asyncio.Event | None = No
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request.url.path)
-        if request.url.path == "/1/cards/PAqU36DV":
+        if request.url.path == "/1/cards/Xy12Zw34":
             if arrived:
                 arrived.set()
             if hold:
@@ -63,7 +63,7 @@ def trello_app(extra: dict, requests: list[str], hold: asyncio.Event | None = No
                 body = body | {"list": {k: v for k, v in body["list"].items() if k in wanted or k == "id"}}
         return httpx.Response(status, json=body)
 
-    backend = TrelloBackend(TokenAuth("KEY", "TOKEN"), transport=httpx.MockTransport(handler))
+    backend = TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
     return TrelloApp(backend, Settings(default_board="b1"))
 
 
@@ -87,12 +87,12 @@ def toasts(app: TrelloApp) -> list[tuple[str, str, str]]:
 
 async def test_archived_card_on_the_open_board_is_named_without_a_reload() -> None:
     requests: list[str] = []
-    app = trello_app({"/1/cards/PAqU36DV": LINKED}, requests)
+    app = trello_app({"/1/cards/Xy12Zw34": LINKED}, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         await follow.follow(app, URL)
         await settle(pilot)
-        assert requests == ["/1/cards/PAqU36DV"]
+        assert requests == ["/1/cards/Xy12Zw34"]
         [(message, severity, _)] = toasts(app)
         assert severity == "warning" and message.startswith("“original ticket” is archived.")
         assert isinstance(app.screen, CardScreen) and app.screen.card_id == "c1"
@@ -101,12 +101,12 @@ async def test_archived_card_on_the_open_board_is_named_without_a_reload() -> No
 
 async def test_card_in_an_archived_list_is_named_without_a_reload() -> None:
     requests: list[str] = []
-    app = trello_app({"/1/cards/PAqU36DV": LINKED | OPEN_CARD_IN_ARCHIVED_LIST}, requests)
+    app = trello_app({"/1/cards/Xy12Zw34": LINKED | OPEN_CARD_IN_ARCHIVED_LIST}, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         await follow.follow(app, URL)
         await settle(pilot)
-        assert requests == ["/1/cards/PAqU36DV"]
+        assert requests == ["/1/cards/Xy12Zw34"]
         [(message, severity, _)] = toasts(app)
         assert severity == "warning" and message.startswith("“original ticket” is in an archived list.")
 
@@ -117,12 +117,12 @@ OTHER_BOARD = {"/1/boards/b2": {"id": "b2", "name": "Other"}, "/1/boards/b2/list
 
 async def test_archived_card_on_another_board_loads_nothing() -> None:
     requests: list[str] = []
-    app = trello_app({"/1/cards/PAqU36DV": LINKED | {"idBoard": "b2"}} | OTHER_BOARD, requests)
+    app = trello_app({"/1/cards/Xy12Zw34": LINKED | {"idBoard": "b2"}} | OTHER_BOARD, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         await follow.follow(app, URL)
         await settle(pilot)
-        assert requests == ["/1/cards/PAqU36DV"]
+        assert requests == ["/1/cards/Xy12Zw34"]
         assert app.store.snapshot.board.id == "b1"
         [(message, severity, _)] = toasts(app)
         assert severity == "warning" and message.startswith("“original ticket” is archived.")
@@ -130,13 +130,13 @@ async def test_archived_card_on_another_board_loads_nothing() -> None:
 
 async def test_card_in_an_archived_list_on_another_board_loads_nothing() -> None:
     requests: list[str] = []
-    app = trello_app({"/1/cards/PAqU36DV": LINKED | OPEN_CARD_IN_ARCHIVED_LIST | {"idBoard": "b2"}} | OTHER_BOARD,
+    app = trello_app({"/1/cards/Xy12Zw34": LINKED | OPEN_CARD_IN_ARCHIVED_LIST | {"idBoard": "b2"}} | OTHER_BOARD,
                      requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         await follow.follow(app, URL)
         await settle(pilot)
-        assert requests == ["/1/cards/PAqU36DV"]
+        assert requests == ["/1/cards/Xy12Zw34"]
         assert app.store.snapshot.board.id == "b1"
         [(message, severity, _)] = toasts(app)
         assert severity == "warning" and message.startswith("“original ticket” is in an archived list.")
@@ -148,7 +148,7 @@ async def test_card_in_an_archived_list_on_another_board_loads_nothing() -> None
 ])
 async def test_card_on_a_board_without_access(status: int, body: str, words: str) -> None:
     requests: list[str] = []
-    app = trello_app({"/1/cards/PAqU36DV": (status, body)}, requests)
+    app = trello_app({"/1/cards/Xy12Zw34": (status, body)}, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         await follow.follow(app, URL)
@@ -164,20 +164,20 @@ async def test_clicks_during_a_follow_are_dropped_and_the_next_one_works() -> No
     requests: list[str] = []
     hold = asyncio.Event()
     arrived = asyncio.Event()
-    app = trello_app({"/1/cards/PAqU36DV": LINKED}, requests, hold, arrived)
+    app = trello_app({"/1/cards/Xy12Zw34": LINKED}, requests, hold, arrived)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         for _ in range(3):
             app.action_follow_link(URL)
             await pilot.pause()
         await asyncio.wait_for(arrived.wait(), 5)
-        assert requests == ["/1/cards/PAqU36DV"] and app.following == URL
+        assert requests == ["/1/cards/Xy12Zw34"] and app.following == URL
         hold.set()
         await settle(pilot)
         assert len(toasts(app)) == 1 and app.following == ""
         app.action_follow_link(URL)
         await settle(pilot)
-        assert requests == ["/1/cards/PAqU36DV"] * 2
+        assert requests == ["/1/cards/Xy12Zw34"] * 2
         assert len(toasts(app)) == 2 and app.following == ""
 
 
@@ -191,12 +191,12 @@ async def test_open_card_link_still_opens() -> None:
         loads.append(1)
         return [OPEN_CARD] if len(loads) == 1 else [OPEN_CARD, linked]
 
-    app = trello_app({"/1/cards/PAqU36DV": linked, "/1/boards/b1/cards": board_cards}, requests)
+    app = trello_app({"/1/cards/Xy12Zw34": linked, "/1/boards/b1/cards": board_cards}, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await settle(pilot)
         await follow.follow(app, URL)
         await settle(pilot)
-        assert "/1/cards/PAqU36DV" in requests and len(loads) == 2
+        assert "/1/cards/Xy12Zw34" in requests and len(loads) == 2
         assert isinstance(app.screen, CardScreen) and app.screen.card_id == "c2"
         assert not toasts(app)
 
@@ -215,7 +215,7 @@ async def test_card_in_a_list_newer_than_the_board_opens_after_a_reload() -> Non
         loads["lists"] += 1
         return [LIST] if loads["lists"] == 1 else [LIST, new_list]
 
-    app = trello_app({"/1/cards/PAqU36DV": linked, "/1/boards/b1/cards": board_cards,
+    app = trello_app({"/1/cards/Xy12Zw34": linked, "/1/boards/b1/cards": board_cards,
                       "/1/boards/b1/lists": board_lists}, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
@@ -228,7 +228,7 @@ async def test_card_in_a_list_newer_than_the_board_opens_after_a_reload() -> Non
 
 async def test_archived_toast_is_plain_text_and_stays_8_seconds() -> None:
     requests: list[str] = []
-    app = trello_app({"/1/cards/PAqU36DV": LINKED | {"name": "a [b]b[/b]"}}, requests)
+    app = trello_app({"/1/cards/Xy12Zw34": LINKED | {"name": "a [b]b[/b]"}}, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         await follow.follow(app, URL)
@@ -237,11 +237,12 @@ async def test_archived_toast_is_plain_text_and_stays_8_seconds() -> None:
         assert "a [b]b[/b]" in note.message and note.markup is False and note.timeout == 8
 
 
-@pytest.mark.parametrize(("extra", "words"), [({}, "is archived."), (OPEN_CARD_IN_ARCHIVED_LIST, "is in an archived list.")])
+@pytest.mark.parametrize(
+    ("extra", "words"), [({}, "is archived."), (OPEN_CARD_IN_ARCHIVED_LIST, "is in an archived list.")])
 async def test_archived_toast_shows_the_cards_emoji_and_keeps_markup_off(extra: dict, words: str) -> None:
     requests: list[str] = []
     named = LINKED | extra | {"name": ":rocket: [bold]ticket[/bold]"}
-    app = trello_app({"/1/cards/PAqU36DV": named}, requests)
+    app = trello_app({"/1/cards/Xy12Zw34": named}, requests)
     async with app.run_test(size=(120, 40)) as pilot:
         await on_card(app, pilot, requests)
         await follow.follow(app, URL)

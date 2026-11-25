@@ -7,13 +7,15 @@ src/tui_trello/
   drafts.py           unsent comments and description edits, per card, in ~/.local/state/tui-trello/drafts.json
   prefs.py            choices the app remembers (hiding read notifications, showing done checklist items),
                       in ~/.local/state/tui-trello/prefs.json
-  auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth), the older key/token flow (TokenAuth)
+  remote.py           the public newsfeed fetched from GitHub (remote/newsfeed.md), cached in
+                      ~/.local/state/tui-trello/remote/; see docs/remote.md
+  auth.py             OAuth 2.0 + PKCE login, token refresh (OAuth2Auth)
   models.py           frozen dataclasses: Board, CardList, Card, Label, Member, Comment, Reaction, Attachment,
                       Checklist, CheckItem, Notification;
                       BoardSnapshot (one board) and WorkSnapshot (my cards on every board), both satisfying
                       CardContext
   agenda.py           group cards by due date for My work
-  files.py            the downloads folder, unique file names, human-readable sizes
+  files.py            human-readable sizes
   query.py            the card filter language (#label @member list:x !overdue words)
   links.py            what a URL points to: a Trello board, card, comment or attachment, or a web page
   emoji.py            `:shortcode:` → emoji for display (names Trello's picker uses)
@@ -42,6 +44,7 @@ src/tui_trello/
       card_view.py    card header, description, attachments, checklists, comments; a rotating tip with no card
       spinner.py      the top-bar spinner, driven by Store.busy: the only loading indicator
       bell.py         the top-bar unread-notification count (a red 🔔)
+      news_badge.py   the top-bar count of unseen news (✦ 1 news (N))
     screens/
       base.py         CardActionsScreen (m, c, e, t, x, a, R, y, Y, o, L, A, D, E, d), ListScreen (f filter, n
                       new card), BoardScreen (redraws on board_changed)
@@ -52,12 +55,18 @@ src/tui_trello/
       notifications.py  Trello's notifications; enter opens the card, d / D mark read, u hides read ones, C replies
       card.py         full-screen card
       preview.py      LinkPreviewScreen: what a card, comment or attachment link points to, in a popup
+      news.py         NewsScreen: the N popup, tui-trello's news from remote/newsfeed.md
       keys.py         the ? key reference: the keys for the screen's HELP_PLACE, a for all
       picker.py       PickerScreen (fuzzy choose one), its label, checklist, attachment, link and file
                       variants, and TextPromptScreen (ctrl+o attaches a file)
 tests/                pytest; UI flows driven by key presses against the demo backend
-scripts/screenshots.py
+scripts/screenshots.py   regenerates docs/screenshots/*.svg from the demo backend
+scripts/arabic_forms.py  joins Arabic letters for those screenshots (SVGs can't shape; terminals do)
 scripts/emoji_codes.py   regenerates emoji_codes.py from iamcal emoji-data (the one download, by hand)
+scripts/release_notes.py prints one version's section of CHANGELOG.md, for the GitHub Release
+remote/               the newsfeed `remote.py` reads from GitHub
+.github/              CI and release workflows, issue and pull request templates, Dependabot
+CHANGELOG.md, docs/releasing.md   what each release changed, and how to make one
 ```
 
 ## Layers
@@ -73,7 +82,6 @@ scripts/emoji_codes.py   regenerates emoji_codes.py from iamcal emoji-data (the 
 - **Auth**: `tui-trello login` runs OAuth 2.0 with PKCE against tui-trello's public OAuth client, so users never
   register an app. `OAuth2Auth`, an `httpx.Auth` handed to `TrelloBackend`, sends the bearer token and refreshes it
   (under a lock: refresh tokens are single use and the backend sends requests concurrently), saving each new pair.
-  `TokenAuth` is the older key + token scheme, kept for `login --token` and scripts.
 - **Backend** is a `Protocol`: async methods returning models, raising `BackendError` with a message fit to show the
   user. Anything that implements it can be passed to `TrelloApp`.
 - **Store** owns the open `BoardSnapshot` and the `WorkSnapshot`. Every mutation goes through it; it patches every

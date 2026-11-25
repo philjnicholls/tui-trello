@@ -6,10 +6,7 @@ page, which redirects to a one-shot server on 127.0.0.1 with a code; the code is
 and a refresh token (90 days, single use). `OAuth2Auth` sends the access token as a bearer token and refreshes it,
 saving each new pair, so users log in once. tui-trello's OAuth client is public: no secret is involved.
 
-`tui-trello login --token` is Trello's older flow: Trello shows a long-lived token for the app's API key, which the
-user pastes into the terminal; requests then carry `key` and `token` (`TokenAuth`).
-
-Either is saved to `credentials.json` (mode 600) next to the config file.
+The tokens are saved to `credentials.json` (mode 600) next to the config file.
 """
 
 from __future__ import annotations
@@ -43,15 +40,12 @@ OAUTH_TOKEN_URL = "https://auth.atlassian.com/oauth/token"
 # through POST /cards/{id}/markAssociatedNotificationsRead, which its API reference says they cover.
 SCOPES = "read:member:trello write:member:trello read:board:trello write:board:trello offline_access"
 
-# tui-trello's API key, for `login --token`. A key identifies the app, not the user, and is public by design.
-APP_API_KEY = "00000000000000000000000000000000"
-AUTHORIZE_URL = "https://trello.com/1/authorize"
-
-APP_NAME = "tui-trello"
 LOGIN_TIMEOUT = 300  # seconds to wait for the user to approve in the browser
 REQUEST_LINE_TIMEOUT = 10  # seconds a connection to the callback server may take to send its request line
 REFRESH_MARGIN = 60  # refresh this many seconds before the access token expires
 DONE = "Logged in to Trello. You can close this tab and go back to the terminal."
+RETIRED_LOGIN = ("Your saved Trello login used a login method tui-trello no longer supports (a pasted token). "
+                 "Log in again in the browser: tui-trello login. Starting it now.")
 
 
 class LoginError(Exception):
@@ -78,31 +72,31 @@ class OAuth2Tokens:
                    time.time() + int(data.get("expires_in", 3600)))
 
 
-@dataclass(frozen=True)
-class LegacyToken:
-    token: str
-
-
-Credentials = OAuth2Tokens | LegacyToken
-
-
 def credentials_path() -> Path:
     return config_path().with_name("credentials.json")
 
 
-def load_credentials(path: Path | None = None) -> Credentials | None:
-    """The saved credentials, or None if there are none or the file is unreadable (the user logs in again)."""
+def load_credentials(path: Path | None = None) -> OAuth2Tokens | None:
+    """The saved login, or None if there is none or the file is unreadable (the user logs in again)."""
     path = path or credentials_path()
     try:
         data = json.loads(path.read_text())
-        if "access_token" in data:
-            return OAuth2Tokens(data["access_token"], data["refresh_token"], float(data["expires_at"]))
-        return LegacyToken(data["token"]) if data.get("token") else None
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):  # missing, or corrupt
+        return OAuth2Tokens(data["access_token"], data["refresh_token"], float(data["expires_at"]))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):  # missing, corrupt, or not an OAuth login
         return None
 
 
-def save_credentials(credentials: Credentials, path: Path | None = None) -> Path:
+def retired_login(path: Path | None = None) -> bool:
+    """True if the saved file is a pasted-token login from before tui-trello logged in with OAuth only."""
+    path = path or credentials_path()
+    try:
+        data = json.loads(path.read_text())
+        return bool(data.get("token")) and "access_token" not in data
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def save_credentials(credentials: OAuth2Tokens, path: Path | None = None) -> Path:
     """Write the credentials readable only by the user, atomically: a refresh token is single use, so a half-written
     file would mean logging in again."""
     path = path or credentials_path()
@@ -129,17 +123,6 @@ def delete_credentials(path: Path | None = None) -> bool:
 
 
 # -- request authentication --------------------------------------------------------------------------------------
-
-
-class TokenAuth(httpx.Auth):
-    """Trello's older scheme: `key` and `token` query parameters."""
-
-    def __init__(self, api_key: str, token: str) -> None:
-        self.params = {"key": api_key, "token": token}
-
-    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
-        request.url = request.url.copy_merge_params(self.params)
-        yield request
 
 
 class OAuth2Auth(httpx.Auth):
@@ -198,12 +181,6 @@ class OAuth2Auth(httpx.Auth):
         except (ValueError, KeyError) as exc:
             raise BackendError(f"Unexpected reply when renewing the Trello login: {response.text[:200]}") from exc
         self.on_refresh(self.tokens)
-
-
-def request_auth(credentials: Credentials, api_key: str = APP_API_KEY) -> httpx.Auth:
-    if isinstance(credentials, OAuth2Tokens):
-        return OAuth2Auth(credentials)
-    return TokenAuth(api_key, credentials.token)
 
 
 async def whoami(auth: httpx.Auth, transport: httpx.AsyncBaseTransport | None = None) -> str:
@@ -289,7 +266,7 @@ async def login_oauth2(
     *,
     port: int,
     client_id: str = OAUTH_CLIENT_ID,
-    open_browser: Callable[[str], object] = webbrowser.open,
+    open_browser: Callable[[str], object] | None = None,
     echo: Callable[[str], object] = print,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> OAuth2Tokens:
@@ -309,7 +286,7 @@ async def login_oauth2(
 
     def open_url() -> None:
         echo(f"Opening Trello in your browser. Click Accept.\nIf the browser doesn't open, visit:\n  {url}\n")
-        open_browser(url)
+        (open_browser or webbrowser.open)(url)  # looked up now, so tests can patch it
 
     code = await _await_callback(port, state, open_url)
     try:
@@ -329,33 +306,3 @@ async def login_oauth2(
         return OAuth2Tokens.from_response(response.json())
     except (ValueError, KeyError) as exc:
         raise LoginError(f"Unexpected reply from Atlassian: {response.text[:200]}") from exc
-
-
-# -- older token login -------------------------------------------------------------------------------------------
-
-
-def authorize_url(api_key: str) -> str:
-    return f"{AUTHORIZE_URL}?" + urlencode({
-        "key": api_key,
-        "name": APP_NAME,
-        "scope": "read,write",
-        "expiration": "never",
-        "response_type": "token",
-    })
-
-
-async def login_token(
-    api_key: str,
-    *,
-    open_browser: Callable[[str], object] = webbrowser.open,
-    echo: Callable[[str], object] = print,
-    ask: Callable[[str], str] = input,
-) -> LegacyToken:
-    url = authorize_url(api_key)
-    echo(f"Opening Trello in your browser. Click Allow, then copy the token it shows you.\n"
-         f"If the browser doesn't open, visit:\n  {url}\n")
-    open_browser(url)
-    token = (await asyncio.to_thread(ask, "Token: ")).strip()
-    if not token:
-        raise LoginError("No token entered.")
-    return LegacyToken(token)

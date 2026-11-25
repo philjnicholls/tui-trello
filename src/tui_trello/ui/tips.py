@@ -22,7 +22,7 @@ TIPS = (
     "`{card.move}` moves a card to another list; `{card.archive}` archives it.",
     "`{card.labels}` puts labels on a card or takes them off; type a new name to create one.",
     "`{card.checklist}` ticks checklist items; type new text to add an item or a checklist.",
-    "`{card.attachments}` lists a card's attachments: open one, save it to Downloads, or attach a file or a link.",
+    "`{card.attachments}` lists a card's attachments: open one, or attach a file or a link.",
     "`{editor.attach}` in a comment or description attaches a file and puts its link in.",
     "`{card.copy_link}` copies a card's link, `{card.copy_comment_link}` the link to one of its comments.",
     "`{card.open}` opens the card on trello.com.",
@@ -34,6 +34,7 @@ TIPS = (
     "`{triage.sort}` in triage cycles the sort: list, due date, last activity.",
     "`{mywork.preview}` in my work shows or hides the card preview.",
     "`{app.refresh}` reloads from Trello.",
+    "`{app.news}` shows news about tui-trello, fetched from its repository; `[remote] enabled = false` turns that off.",
     "Every key can be changed in config.toml's `[keys]`; `tui-trello keys` lists them.",
     "`{app.help}` lists every key.",
 )

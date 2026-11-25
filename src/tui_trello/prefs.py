@@ -14,6 +14,8 @@ from typing import Any
 
 from tui_trello.config import state_dir
 
+NEWS_SEEN_KEPT = 100
+
 
 def prefs_path() -> Path:
     return state_dir() / "prefs.json"
@@ -43,6 +45,16 @@ class Prefs:
     @show_done_check_items.setter
     def show_done_check_items(self, show: bool) -> None:
         self._set("show_done_check_items", show)
+
+    @property
+    def news_seen(self) -> list[str]:
+        """The ids of the news items the user has opened the news since (see `tui_trello.remote`)."""
+        seen = self._data.get("news_seen", [])
+        return [i for i in seen if isinstance(i, str)] if isinstance(seen, list) else []
+
+    @news_seen.setter
+    def news_seen(self, ids: list[str]) -> None:
+        self._set("news_seen", ids[-NEWS_SEEN_KEPT:])
 
     def _set(self, key: str, value: Any) -> None:
         if self._data.get(key) == value:

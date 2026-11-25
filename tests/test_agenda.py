@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from tui_trello.agenda import agenda, group_of
 from tui_trello.models import Card
 
-NOW = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 16, 12, tzinfo=UTC)
 
 
 def card(name: str, due_in_hours: float | None, done: bool = False) -> Card:

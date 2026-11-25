@@ -21,6 +21,7 @@ Every key has an id, and `[keys]` in config.toml changes it (see `tui_trello.ui.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from rich.text import Text
@@ -39,6 +40,7 @@ from tui_trello.drafts import Drafts
 from tui_trello.emoji import with_emoji
 from tui_trello.models import Notification
 from tui_trello.prefs import Prefs
+from tui_trello.remote import RECHECK_EVERY, NewsItem, RemoteFiles
 from tui_trello.store import Store
 from tui_trello.ui import desktop, follow, keymap, keys_compat, markdown, render
 from tui_trello.ui.commands import BoardCommands, CardCommands
@@ -46,12 +48,15 @@ from tui_trello.ui.screens.browser import BrowserScreen
 from tui_trello.ui.screens.card import CardScreen
 from tui_trello.ui.screens.keys import KeysScreen
 from tui_trello.ui.screens.mywork import MyWorkScreen
+from tui_trello.ui.screens.news import NewsScreen
 from tui_trello.ui.screens.notifications import NotificationsScreen
 from tui_trello.ui.screens.picker import Choice, PickerScreen
 from tui_trello.ui.screens.preview import LinkPreviewScreen, previewable
 from tui_trello.ui.screens.search import SearchScreen
 from tui_trello.ui.screens.triage import TriageScreen
 from tui_trello.ui.widgets.card_view import CardView
+
+log = logging.getLogger(__name__)
 
 keys_compat.install()
 
@@ -120,12 +125,13 @@ class TrelloApp(App):
         Binding("ctrl+u,pageup", "motion('half_up')", "Half page up", show=False, id="app.half_up"),
         Binding("colon", "command_palette", "Commands", show=False, id="app.commands"),
         Binding("question_mark", "toggle_help", "Keys", id="app.help"),
+        Binding("N", "news", "News", show=False, id="app.news"),
         Binding("slash", "search", "Search", id="app.search"),
         Binding("q", "quit", "Quit", id="app.quit"),
     ]
 
     def __init__(self, backend: Backend, settings: Settings, drafts: Drafts | None = None,
-                 prefs: Prefs | None = None, open_url: str = "") -> None:
+                 prefs: Prefs | None = None, open_url: str = "", remote: RemoteFiles | None = None) -> None:
         super().__init__(ansi_color=settings.transparent)
         self.settings = settings
         self.keymap = keymap.KeyMap.build(settings.keys)  # `[keys]`, checked; problems are in `keymap.warnings`
@@ -133,6 +139,10 @@ class TrelloApp(App):
         self.prefs = prefs or Prefs()
         # Carries the new "shown" value of `prefs.show_done_check_items`, for every CardView on every screen.
         self.done_check_items_toggled: Signal[bool] = Signal(self, "done_check_items_toggled")
+        # tui-trello's news, fetched from GitHub; None (tests, screenshots, `--no-remote`): no fetching, no news.
+        self.remote = remote
+        self.news_changed: Signal[int] = Signal(self, "news_changed")  # carries the number of unseen items
+        self.news_announced: set[str] = set()  # the items a toast has been shown for in this run
         self.store = Store(self, backend, drafts)
         self.pending_chord = ""
         self.blurred: tuple[Widget, float] | None = None  # the widget that last lost the focus, and when
@@ -156,6 +166,9 @@ class TrelloApp(App):
         self.check_notifications()
         if self.settings.notify_interval > 0:
             self.set_interval(self.settings.notify_interval, self.check_notifications)
+        if self.remote:
+            self.check_remote()
+            self.set_interval(RECHECK_EVERY, self.check_remote)
 
     def open_start_board(self) -> None:
         if self.settings.default_board:
@@ -223,6 +236,8 @@ class TrelloApp(App):
             return False  # they'd change what is under the popup, which closing it must leave as it was
         if action == "search" and isinstance(self.screen, ModalScreen):
             return False  # not over a popup: a picker, the key help, a confirmation
+        if action == "news" and isinstance(self.screen, ModalScreen):
+            return False  # NewsScreen closes itself with the same key
         if action == "toggle_done_check_items":
             return bool(self.screen.query(CardView))  # only where a card pane is
         return True
@@ -237,6 +252,37 @@ class TrelloApp(App):
         """`X`: show or hide the ticked items of every checklist, in every card pane; remembered."""
         self.prefs.show_done_check_items = not self.prefs.show_done_check_items
         self.done_check_items_toggled.publish(self.prefs.show_done_check_items)
+
+    def action_news(self) -> None:
+        self.push_screen(NewsScreen())
+
+    @property
+    def unseen_news(self) -> list[NewsItem]:
+        if not self.remote:
+            return []
+        seen = set(self.prefs.news_seen)
+        return [item for item in self.remote.news() if item.id not in seen]
+
+    def mark_news_seen(self, ids: list[str]) -> None:
+        self.prefs.news_seen = self.prefs.news_seen + [i for i in ids if i not in self.prefs.news_seen]
+        self.news_announced.update(ids)
+        self.news_changed.publish(len(self.unseen_news))
+
+    @work(exclusive=True, group="remote", exit_on_error=False)
+    async def check_remote(self) -> None:
+        """Fetch tui-trello's news (at most hourly; failures are silent), and say once what is new."""
+        try:
+            await self.remote.refresh()
+            unseen = self.unseen_news
+            self.news_changed.publish(len(unseen))
+            if fresh := [item for item in unseen if item.id not in self.news_announced]:
+                self.news_announced.update(item.id for item in fresh)
+                more = f" and {len(fresh) - 1} more" if len(fresh) > 1 else ""
+                hint = self.keymap.fill("({app.news} to read)")
+                self.notify(f"{fresh[0].title}{more} {hint}", title="News from tui-trello", timeout=10,
+                            markup=False)  # fetched text
+        except Exception:
+            log.debug("news check failed", exc_info=True)
 
     def action_toggle_help(self) -> None:
         if not isinstance(self.screen, KeysScreen):

@@ -6,12 +6,13 @@ import itertools
 import mimetypes
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from tui_trello import links
 from tui_trello.backend import BackendError
 from tui_trello.models import (
+    REACTIONS,
     Attachment,
     Board,
     BoardSnapshot,
@@ -24,13 +25,21 @@ from tui_trello.models import (
     Label,
     Member,
     Notification,
-    REACTIONS,
     Reaction,
     WorkSnapshot,
 )
 
-NOW = datetime.now(timezone.utc).replace(hour=9, minute=0, second=0, microsecond=0)  # due dates are relative
-END_OF_DAY = NOW.replace(hour=23, minute=59)  # a card due today isn't overdue until the day is over
+
+def today_at_nine() -> datetime:
+    """The base for the demo's relative dates. Read once when a `DemoBackend` is built (not at import), so a
+    backend made late in a process's life, or across midnight UTC in a test run, still has "due today" cards that
+    are not yet overdue. A backend that outlives its day keeps the dates it was built with."""
+    return datetime.now(UTC).replace(hour=9, minute=0, second=0, microsecond=0)
+
+
+def end_of_day(base: datetime) -> datetime:
+    """A card due today isn't overdue until the day is over."""
+    return base.replace(hour=23, minute=59)
 
 MEMBERS = {
     "m1": Member("m1", "Ada Lovelace", "ada"),
@@ -76,11 +85,14 @@ PRODUCT_BOARD = [
 ]
 
 # Right-to-left text, mixed with English and numbers, to exercise ui/bidi.py.
+ARABIC_NAME = "مشروع الموقع"
+ARABIC_CHECKLIST = "المهام"
 ARABIC_BOARD = [
     ("للمعالجة", [
         ("إصلاح خطأ في نموذج التسجيل (عاجل)", ["bug"], ["m1"], -1, 2, (1, 3)),
         ("تحديث API إلى الإصدار 2.5", ["feat"], ["m4"], 4, 0, (0, 0)),
-        ("مراجعة التصميم: الصفحة الرئيسية الجديدة مع دعم كامل للكتابة من اليمين إلى اليسار", ["ux"], ["m1", "m4"], 9, 1, (0, 2)),
+        ("مراجعة التصميم: الصفحة الرئيسية الجديدة مع دعم كامل للكتابة من اليمين إلى اليسار", ["ux"], ["m1", "m4"], 9, 1,
+         (0, 2)),
     ]),
     ("قيد العمل", [
         ("Migrate بيانات الاستبيان إلى PostgreSQL", ["ops"], ["m4"], 2, 0, (2, 4)),
@@ -171,7 +183,8 @@ NOTIFICATIONS = [
     ("commentCard", "Grace Hopper", "Split backend from UI", 26, False, "Looks good to me."),
     ("reactionAdded", "Alan Turing", "Split backend from UI", 30, False, "Pushed the split: screens use the store."),
     ("changeCard", "Alan Turing", "Show comments on card detail", 50, False, "Done"),
-    ("mentionedOnCard", "ليلى حداد", "إصلاح خطأ في نموذج التسجيل (عاجل)", 70, False, "@ada جربت في Chrome، والمشكلة ما زالت قائمة."),
+    ("mentionedOnCard", "ليلى حداد", "إصلاح خطأ في نموذج التسجيل (عاجل)", 70, False,
+     "@ada جربت في Chrome، والمشكلة ما زالت قائمة."),
 ]
 
 
@@ -183,22 +196,22 @@ class DemoBackend:
         self._comments: dict[str, list[Comment]] = {}
         self._checklists: dict[str, list[Checklist]] = {}
         self._attachments: dict[str, list[Attachment]] = {}
-        self._files: dict[str, bytes] = {}  # uploads' content, by attachment id
         self._archived: dict[str, list[Card]] = {}  # archived cards, by board id
+        base = today_at_nine()
         for board_id, name, slug, starred, layout in [
             ("b-product", "Product roadmap", "product-roadmap", True, PRODUCT_BOARD),
             ("b-home", "Home", "home", False, HOME_BOARD),
-            ("b-arabic", "مشروع الموقع", "arabic-site", False, ARABIC_BOARD),
+            ("b-arabic", ARABIC_NAME, "arabic-site", False, ARABIC_BOARD),
         ]:
             self._boards[board_id] = self._build(Board(board_id, name, f"https://trello.example/b/{board_id}/{slug}",
-                                                       starred), layout)
+                                                       starred), layout, base)
         self._add_links_description()
-        now = datetime.now(timezone.utc)  # "1h ago" should read so whatever the time of day
+        now = datetime.now(UTC)  # "1h ago" should read so whatever the time of day
         self._notifications = [self.notification(kind, who, card, now - timedelta(hours=hours), unread, extra)
                                for kind, who, card, hours, unread, extra in NOTIFICATIONS]
-        self._seed_archived()
+        self._seed_archived(base)
 
-    def _seed_archived(self) -> None:
+    def _seed_archived(self, base: datetime) -> None:
         """One archived card, so that search has one to find."""
         snapshot = self._boards["b-product"]
         done = next(lst for lst in snapshot.lists if lst.name == "Done")
@@ -207,7 +220,7 @@ class DemoBackend:
         self._archived[snapshot.board.id] = [Card(
             card_id, "Drag and drop cards with the mouse", done.id, snapshot.board.id,
             "Dropped: the app is keyboard first.", pos=99, url=f"https://trello.example/c/{card_id}",
-            last_activity=NOW - timedelta(days=30), closed=True)]
+            last_activity=base - timedelta(days=30), closed=True)]
 
     def _add_links_description(self) -> None:
         """Give "Offline cache for boards" a description with a card, comment, attachment, board and web link, which
@@ -226,7 +239,7 @@ class DemoBackend:
                      unread: bool = True, extra: str = "") -> Notification:
         """A notification about the card named `card_name`; `extra` is the comment, or the list it moved to."""
         snapshot, card = next((s, c) for s in self._boards.values() for c in s.cards if c.name == card_name)
-        return Notification(next(self._ids), kind, unread, date or datetime.now(timezone.utc), creator, card.id,
+        return Notification(next(self._ids), kind, unread, date or datetime.now(UTC), creator, card.id,
                             card.name, snapshot.board.id, snapshot.board.name,
                             list_name=extra if kind == "changeCard" else "",
                             text=extra if kind in ("commentCard", "mentionedOnCard", "reactionAdded") else "",
@@ -238,7 +251,7 @@ class DemoBackend:
         """Something happened on Trello: the next `notifications()` call returns it first (tests)."""
         self._notifications.insert(0, notification)
 
-    def _build(self, board: Board, layout: list) -> BoardSnapshot:
+    def _build(self, board: Board, layout: list, base: datetime) -> BoardSnapshot:
         rtl = board.id == "b-arabic"
         labels_by_key = {
             key: Label(f"{label.id}-ar", ARABIC_LABELS[key], label.color) if rtl and key in ARABIC_LABELS else label
@@ -251,14 +264,15 @@ class DemoBackend:
             for card_pos, (name, labels, members, due, comments, checklist) in enumerate(card_specs):
                 card_id = next(self._ids)
                 self._comments[card_id] = [
-                    Comment(next(self._ids), author, text, NOW - timedelta(hours=3 * i),
+                    Comment(next(self._ids), author, text, base - timedelta(hours=3 * i),
                             tuple(self._reaction(member, emoji) for member, emoji in COMMENT_REACTIONS.get(i, ())),
                             next((m.username for m in MEMBERS.values() if m.full_name == author), ""),
                             next((m.id for m in MEMBERS.values() if m.full_name == author), ""))
                     for i, (author, text) in enumerate((ARABIC_COMMENTS if rtl else COMMENTS)[:comments])
                 ]
                 self._checklists[card_id] = self._checklist(checklist, rtl)
-                self._attachments[card_id] = [self._attachment(card_id, *spec) for spec in ATTACHMENTS.get(name, ())]
+                self._attachments[card_id] = [self._attachment(card_id, base, *spec)
+                                              for spec in ATTACHMENTS.get(name, ())]
                 cards.append(Card(
                     id=card_id,
                     name=name,
@@ -267,11 +281,11 @@ class DemoBackend:
                     desc=(ARABIC_DESCRIPTION if rtl else DESCRIPTION) if comments else "",
                     labels=tuple(labels_by_key[label] for label in labels),
                     member_ids=tuple(members),
-                    due=END_OF_DAY + timedelta(days=due) if due is not None else None,
+                    due=end_of_day(base) + timedelta(days=due) if due is not None else None,
                     due_complete=due is not None and list_name == "Done",
                     pos=card_pos,
                     url=f"https://trello.example/c/{card_id}",
-                    last_activity=NOW - timedelta(days=card_pos),
+                    last_activity=base - timedelta(days=card_pos),
                     comment_count=comments,
                     checklist=checklist,
                     attachment_count=len(self._attachments[card_id]),
@@ -285,15 +299,14 @@ class DemoBackend:
             return []
         names = ARABIC_CHECK_ITEMS if rtl else CHECK_ITEMS
         items = tuple(CheckItem(next(self._ids), names[n % len(names)], n < checked, n) for n in range(total))
-        return [Checklist(next(self._ids), "المهام" if rtl else "Tasks", items)]
+        return [Checklist(next(self._ids), ARABIC_CHECKLIST if rtl else "Tasks", items)]
 
-    def _attachment(self, card_id: str, name: str, link: str | None, content: bytes) -> Attachment:
+    def _attachment(self, card_id: str, base: datetime, name: str, link: str | None, content: bytes) -> Attachment:
         attachment_id = next(self._ids)
         if link:
-            return Attachment(attachment_id, name, link, is_upload=False, date=NOW)
-        self._files[attachment_id] = content
+            return Attachment(attachment_id, name, link, is_upload=False, date=base)
         return Attachment(attachment_id, name, f"https://trello.example/1/cards/{card_id}/attachments/{attachment_id}"
-                          f"/download/{name}", is_upload=True, size=len(content), date=NOW, file_name=name,
+                          f"/download/{name}", is_upload=True, size=len(content), date=base, file_name=name,
                           mime_type=mimetypes.guess_type(name)[0] or "")
 
     def _reaction(self, member_id: str, short_name: str) -> Reaction:
@@ -378,7 +391,7 @@ class DemoBackend:
         card_id = next(self._ids)
         card = Card(card_id, name, list_id, snapshot.board.id, desc,
                     pos=(min(siblings, default=0) - 1) if pos == "top" else (max(siblings, default=0) + 1),
-                    url=f"https://trello.example/c/{card_id}", last_activity=datetime.now(timezone.utc))
+                    url=f"https://trello.example/c/{card_id}", last_activity=datetime.now(UTC))
         snapshot.cards.append(card)
         self._comments[card_id], self._checklists[card_id], self._attachments[card_id] = [], [], []
         return card
@@ -401,7 +414,7 @@ class DemoBackend:
             things.pop(card_id, None)
 
     async def add_comment(self, card_id: str, text: str) -> Comment:
-        comment = Comment(next(self._ids), "You", text, datetime.now(timezone.utc), author_id=ME)
+        comment = Comment(next(self._ids), "You", text, datetime.now(UTC), author_id=ME)
         self._comments.setdefault(card_id, []).insert(0, comment)
         for snapshot in self._boards.values():
             if card := snapshot.card(card_id):
@@ -442,19 +455,16 @@ class DemoBackend:
             content = path.read_bytes()
         except OSError as exc:
             raise BackendError(f"Could not read {path}: {exc.strerror}") from exc
-        return self._attach(card_id, self._attachment(card_id, path.name, None, content))
+        return self._attach(card_id, self._attachment(card_id, datetime.now(UTC), path.name, None, content))
 
     async def attach_link(self, card_id: str, url: str, name: str = "") -> Attachment:
-        return self._attach(card_id, self._attachment(card_id, name or url, url, b""))
+        return self._attach(card_id, self._attachment(card_id, datetime.now(UTC), name or url, url, b""))
 
     def _attach(self, card_id: str, attachment: Attachment) -> Attachment:
         self._attachments.setdefault(card_id, []).append(attachment)
         snapshot, card = self._find(card_id)
         snapshot.replace_card(replace(card, attachment_count=len(self._attachments[card_id])))
         return attachment
-
-    async def download_attachment(self, attachment: Attachment, dest: Path) -> None:
-        dest.write_bytes(self._files[attachment.id])
 
     async def add_reaction(self, comment_id: str, short_name: str) -> Reaction:
         reaction = self._reaction(ME, short_name)

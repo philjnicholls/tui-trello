@@ -1,43 +1,77 @@
 # tui-trello
 
-A keyboard-first terminal client for Trello, built on [Textual](https://textual.textualize.io/).
+[![CI](https://github.com/philjnicholls/tui-trello/actions/workflows/ci.yml/badge.svg)](https://github.com/philjnicholls/tui-trello/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tui-trello)](https://pypi.org/project/tui-trello/)
+[![Python versions](https://img.shields.io/pypi/pyversions/tui-trello)](https://pypi.org/project/tui-trello/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-![browser](docs/screenshots/browser.svg)
+A keyboard-first terminal client for Trello, built on [Textual](https://textual.textualize.io/). Browse boards, read
+and write cards and comments, search every board, and keep an eye on your notifications without leaving the terminal
+or reaching for the mouse.
 
-## Install and run
+![browser](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/browser.svg)
+
+## Features
+
+- Four views: a Miller-column **browser**, a **triage** table, **my work** (your cards by due date) and
+  **notifications**, switched with `1` to `4`.
+- Vim-style keys everywhere (`j` `k` `gg` `G` `ctrl+d`), a command palette, and a `?` help that shows the keys for the
+  view you are in. Every key can be changed in `config.toml`.
+- Create, move, archive and delete cards; edit descriptions; comment, reply, react, edit and delete comments; labels,
+  checklists and attachments.
+- Search every board on Trello, archived cards too, and filter the cards on screen (`#label`, `@member`, `!overdue`).
+- Follow and preview Trello links from card text, or open one at start-up with `--open`.
+- Unread notification counts, in-app toasts and desktop notifications.
+- Drafts of comments and descriptions are kept if you quit or the network drops.
+- Markdown, emoji (`:tada:`) and right-to-left text (Arabic and other RTL scripts) shown properly.
+- Logs in with OAuth 2.0 and PKCE: no password or secret to handle.
+- A built-in demo with sample data, so you can try it without a Trello account.
+
+## Install
+
+Python 3.11 or newer on Linux or macOS (Windows is untested). From PyPI:
 
 ```sh
-python -m venv venv && venv/bin/pip install -e '.[dev]'
-venv/bin/tui-trello --demo          # sample data, no Trello account needed
-venv/bin/tui-trello                 # your boards
-venv/bin/tui-trello --board tK1afjyM --layout triage
-venv/bin/tui-trello --open 'https://trello.com/c/nVTbsQMq'   # a board, card, comment or attachment link
+pipx install tui-trello         # or: uv tool install tui-trello
+tui-trello login                # authorise tui-trello in your browser, once
+```
+
+To run the latest code from GitHub instead: `pipx install git+https://github.com/philjnicholls/tui-trello`
+
+## Quick start
+
+```sh
+tui-trello --demo               # sample data, no Trello account needed
+tui-trello login                # authorise tui-trello in your browser, once
+tui-trello                      # your boards
+tui-trello --version
+```
+
+More ways to start it:
+
+```sh
+tui-trello --board AbCd1234 --layout triage
+tui-trello --open 'https://trello.com/c/Xy12Zw34'   # a board, card, comment or attachment link
 ```
 
 ### Logging in
 
 ```sh
-venv/bin/tui-trello login
+tui-trello login
 ```
 
 Trello (Atlassian) opens in your browser and asks whether to let tui-trello use your account. Click **Accept** and
 you're done: the browser hands the login back to the app on `http://127.0.0.1:8765`, and the app saves it to
-`~/.config/tui-trello/credentials.json` (readable only by you). This is OAuth 2.0 with PKCE; you don't need an API
-key, secret or token of your own. The app renews the login by itself; you only log in again if you don't use it for
+`~/.config/tui-trello/credentials.json` (readable only by you). This is OAuth 2.0 with PKCE; you don't need a
+secret or token of your own. The app renews the login by itself; you only log in again if you don't use it for
 90 days or revoke it. Running `tui-trello` without logging in starts the same flow, and `tui-trello logout` forgets
 it (revoke it under Applications at https://trello.com/my/account).
-
-`tui-trello login --token` is Trello's older flow, as a fallback: Trello shows a token for the app's API key, which
-you paste into the terminal.
-
-For the maintainers: the OAuth client (`OAUTH_CLIENT_ID` in `src/tui_trello/auth.py`) is set up at
-https://trello.com/apps/admin with callback URL `http://127.0.0.1:8765/callback` and the scopes in `auth.SCOPES`.
 
 Optional settings go in `~/.config/tui-trello/config.toml`:
 
 ```toml
 [trello]
-default_board = "tK1afjyM"   # open this board at start-up instead of choosing one
+default_board = "AbCd1234"   # open this board at start-up instead of choosing one
 
 [ui]
 layout = "browser"           # browser, triage, mywork or notifications
@@ -47,22 +81,28 @@ transparent = true           # use the terminal's own background and colours (th
 interval = 60                # check for new Trello notifications every minute; 0 turns it off
 desktop = true               # also raise a desktop notification for each new one
 
+[remote]
+enabled = true               # false: make no request to GitHub for news (see "News")
+
 [keys]                       # change any key; see "Changing keys" below
 card.delete = "ctrl+x"       # delete the card with ctrl+x instead of D
 list.filter = ["f", "ctrl+f"]
 chord.next_view = "g n"      # a two-key sequence
 ```
 
-`TRELLO_API_KEY` and `TRELLO_TOKEN` in the environment are only for the older token flow; leave them unset.
-A token set in `TRELLO_TOKEN` (or `token` under `[trello]` in the config) is used instead of your saved login.
+`TRELLO_BOARD` in the environment overrides `default_board`.
 
 ## Right-to-left text
 
-Arabic and other right-to-left scripts in card names, lists, labels, descriptions and comments are laid out by the app: each field is
-wrapped or cut in reading order, then reordered for display, and RTL paragraphs are right-aligned. Terminals that
-reorder RTL text themselves (GNOME Terminal, Ptyxis, Tilix and other VTE-based ones) are told not to while the app
-runs, since they reorder whole screen lines, across panes. Other terminals need no setting. The demo has an Arabic
-board (`b`, then "مشروع").
+Arabic and other right-to-left scripts in card names, lists, labels, descriptions and comments are laid out by the app:
+each field is wrapped or cut in reading order, then reordered for display, and RTL paragraphs are right-aligned.
+Terminals that reorder RTL text themselves (GNOME Terminal, Ptyxis, Tilix and other VTE-based ones) are told not to
+while the app runs, since they reorder whole screen lines, across panes. Other terminals need no setting. Joining Arabic
+letters into their connected forms is the terminal's job; a terminal without Arabic support shows them in the right
+order but unjoined. The demo has an Arabic board (`b`, then "مشروع").
+
+Known limitation: a terminal that shapes Arabic itself (VTE's default, Konsole, mlterm) shapes the app's visually
+reordered runs, so some letters may join wrongly. Scripts whose letters don't join are not affected.
 
 Descriptions and comments show their Markdown styled: bold, italic, strikethrough, `code`, links, @mentions, headings,
 lists, quotes, code blocks and tables, in either direction. Checklist items get the inline part: bold, italic,
@@ -70,7 +110,7 @@ strikethrough, `code`, links and @mentions. Ticked checklist items are hidden, w
 checklist; `X` shows them, and the app remembers the choice. Emoji written as `:name:` (`:tada:`, `:+1:`) show as
 the emoji, in card names and notifications too.
 
-![arabic](docs/screenshots/arabic-browser.svg)
+![arabic](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/arabic-browser.svg)
 
 ## Views
 
@@ -82,7 +122,7 @@ the emoji, in card names and notifications too.
 | `4` | notifications | Trello's notifications (the bell): mentions, cards you were added to, comments, |
 |     |               | due dates                                                                       |
 
-![my work](docs/screenshots/mywork.svg)
+![my work](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/mywork.svg)
 
 ## Searching
 
@@ -114,9 +154,8 @@ A card's files and links are listed in its details, and the 📎 badge counts th
 
 - enter opens the highlighted one in your web browser. For a file, trello.com shows or downloads it there, as you
   are logged in.
-- `ctrl+s` saves a file to your downloads folder (`$XDG_DOWNLOAD_DIR`, else `~/Downloads`), adding ` (1)` to the
-  name if it's taken. Trello only lets the app download files if you logged in with `tui-trello login --token`; with
-  the browser login (no OAuth 2.0 permission covers downloads) use enter instead.
+- `ctrl+s` doesn't save the file: Trello doesn't let apps download uploaded files with the OAuth login, so it reminds
+  you to press enter and save it from your web browser.
 - `ctrl+y` copies the link.
 - "attach a file…" browses for a file to upload: enter goes into a folder or picks a file, typing filters, and
   typing a path (`~/report.pdf`) goes straight to it. Typing or pasting a URL offers to attach it as a link.
@@ -157,8 +196,7 @@ in terminals that support it.
   marks it with a bar down its left side (only the newest 50 comments are loaded; for an older one, `o` opens the card
   on trello.com).
 - A board link opens the board in the browser view.
-- An attachment link (a pasted screenshot, say) opens the attachments picker on that file: enter opens it, `ctrl+s`
-  saves it.
+- An attachment link (a pasted screenshot, say) opens the attachments picker on that file: enter opens it.
 - Any other `http`, `https` or `mailto` link opens in the web browser. Other schemes are never opened.
 
 `tui-trello --open URL` follows a link at start-up instead of opening the default board: a board link starts on that
@@ -193,7 +231,7 @@ only the in-app pop-ups.
 Marking notifications read needs a permission logins from before notifications were added don't have; if the app
 says so, run `tui-trello login` again.
 
-![notifications](docs/screenshots/notifications.svg)
+![notifications](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/notifications.svg)
 
 ## Keys
 
@@ -219,8 +257,9 @@ can be changed: see [Changing keys](#changing-keys).
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |
 | `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
 | `X`                    | show or hide ticked checklist items in the card pane (hidden at first; remembered) |
-| `a`                    | attachments: enter opens one in the browser, `ctrl+s` saves it to Downloads,       |
-|                        | `ctrl+y` copies its link; attach a file, or paste a URL to attach a link           |
+| `a`                    | attachments: enter opens one in the browser, where you can save a file (`ctrl+s`   |
+|                        | reminds you), `ctrl+y` copies its link; attach a file, or paste a URL to attach a  |
+|                        | link                                                                               |
 | `ctrl+o`               | in a comment or description: attach a file and put its link in                     |
 | `C`                    | reply to a comment (on a card or in notifications): a new comment quoting it and   |
 |                        | @mentioning its author                                                             |
@@ -280,87 +319,104 @@ popup.preview = "ctrl+r"          # preview in the links and search popups
 Every id, with its default key:
 
 <!-- keys-table -->
-| id                            | default                | what it does                             |
-| ----------------------------- | ---------------------- | ---------------------------------------- |
-| `app.browser`                 | `1`                    | Go to the browser view                   |
-| `app.triage`                  | `2`                    | Go to the triage view                    |
-| `app.mywork`                  | `3`                    | Go to my work                            |
-| `app.notifications`           | `4`                    | Go to notifications                      |
-| `app.boards`                  | `b`                    | Pick a board                             |
-| `app.refresh`                 | `r`                    | Reload from Trello                       |
-| `app.done_items`              | `X`                    | Show or hide ticked checklist items      |
-| `app.down`                    | `j, down`              | Move down (any list, table or pane)      |
-| `app.up`                      | `k, up`                | Move up                                  |
-| `app.bottom`                  | `G, end`               | Jump to the last row                     |
-| `app.top`                     | `home`                 | Jump to the first row                    |
-| `app.half_down`               | `ctrl+d, pagedown`     | Half a page down                         |
-| `app.half_up`                 | `ctrl+u, pageup`       | Half a page up                           |
-| `app.commands`                | `:`                    | Command palette                          |
-| `app.help`                    | `?`                    | Show or close the key help               |
-| `app.search`                  | `/`                    | Search every board on Trello             |
-| `app.quit`                    | `q`                    | Quit                                     |
-| `chord.top`                   | `g g`                  | Jump to the first row                    |
-| `chord.next_view`             | `g t`                  | Go to the next view                      |
-| `chord.previous_view`         | `g T`                  | Go to the previous view                  |
-| `card.move`                   | `m`                    | Move the card to another list            |
-| `card.comment`                | `c`                    | Write a comment                          |
-| `card.description`            | `e`                    | Edit the description                     |
-| `card.labels`                 | `t`                    | Put labels on the card or take them off  |
-| `card.checklist`              | `x`                    | Tick checklist items, add items          |
-| `card.attachments`            | `a`                    | Attachments: open, save, add             |
-| `card.reply`                  | `C`                    | Reply to a comment                       |
-| `card.react`                  | `R`                    | React to a comment                       |
-| `card.copy_link`              | `y`                    | Copy the card's link                     |
-| `card.copy_comment_link`      | `Y`                    | Copy the link to a comment               |
-| `card.open`                   | `o`                    | Open the card in the web browser         |
-| `card.follow_link`            | `L`                    | Follow a link on the card                |
-| `card.archive`                | `A`                    | Archive the card (asks first)            |
-| `card.delete`                 | `D`                    | Delete the card for good (asks first)    |
-| `card.edit_comment`           | `E`                    | Edit one of your comments                |
-| `card.delete_comment`         | `d`                    | Delete one of your comments (asks first) |
-| `list.filter`                 | `f`                    | Filter the cards on screen               |
-| `list.clear_filter`           | `esc`                  | Clear the filter                         |
-| `list.new_card`               | `n`                    | Make a new card                          |
-| `list.open`                   | `l, right`             | Open the card                            |
-| `board.copy_link`             | `B`                    | Copy the board's link                    |
-| `browser.in`                  | `l, right`             | Into the cards; open a card              |
-| `browser.out`                 | `h, left`              | Back to the lists                        |
-| `triage.sort`                 | `s`                    | Cycle the sort                           |
-| `mywork.preview`              | `p`                    | Show or hide the preview                 |
-| `card_screen.back`            | `esc, q, h, left`      | Close the card                           |
-| `notifications.mark_read`     | `d`                    | Mark the notification read               |
-| `notifications.mark_all_read` | `D`                    | Mark every notification read             |
-| `notifications.toggle_read`   | `u`                    | Hide or show the ones you've read        |
-| `help.close`                  | `esc, q`               | Close the key help                       |
-| `help.all`                    | `a`                    | Every key, or just this view's           |
-| `preview.close`               | `esc, q`               | Close the link preview                   |
-| `preview.follow`              | `enter`                | Follow the link                          |
-| `popup.open_in_browser`       | `ctrl+o`               | Open the link in the web browser         |
-| `popup.copy_link`             | `ctrl+y`               | Copy the link                            |
-| `popup.preview`               | `alt+p`                | Preview the highlighted link or result   |
-| `picker.close`                | `esc`                  | Close the popup                          |
-| `picker.down`                 | `ctrl+j, down, ctrl+n` | Next row                                 |
-| `picker.up`                   | `ctrl+k, up, ctrl+p`   | Previous row                             |
-| `attachments.save`            | `ctrl+s`               | Save the attachment to Downloads         |
-| `editor.cancel`               | `esc`                  | Close the editor (a draft is kept)       |
-| `editor.enter`                | `enter`                | Send (a new line in a description)       |
-| `editor.save`                 | `ctrl+s`               | Save                                     |
-| `editor.mention`              | `tab`                  | Pick the @mention                        |
-| `editor.mention_down`         | `down`                 | Next @mention                            |
-| `editor.mention_up`           | `up`                   | Previous @mention                        |
-| `editor.newline`              | `alt+enter, ctrl+j`    | Start a new line                         |
-| `editor.attach`               | `ctrl+o`               | Attach a file                            |
-| `confirm.yes`                 | `y`                    | Confirm                                  |
-| `confirm.no`                  | `n, esc`               | Cancel                                   |
+| id                            | default                | what it does                                      |
+| ----------------------------- | ---------------------- | ------------------------------------------------- |
+| `app.browser`                 | `1`                    | Go to the browser view                            |
+| `app.triage`                  | `2`                    | Go to the triage view                             |
+| `app.mywork`                  | `3`                    | Go to my work                                     |
+| `app.notifications`           | `4`                    | Go to notifications                               |
+| `app.boards`                  | `b`                    | Pick a board                                      |
+| `app.refresh`                 | `r`                    | Reload from Trello                                |
+| `app.done_items`              | `X`                    | Show or hide ticked checklist items               |
+| `app.down`                    | `j, down`              | Move down (any list, table or pane)               |
+| `app.up`                      | `k, up`                | Move up                                           |
+| `app.bottom`                  | `G, end`               | Jump to the last row                              |
+| `app.top`                     | `home`                 | Jump to the first row                             |
+| `app.half_down`               | `ctrl+d, pagedown`     | Half a page down                                  |
+| `app.half_up`                 | `ctrl+u, pageup`       | Half a page up                                    |
+| `app.commands`                | `:`                    | Command palette                                   |
+| `app.help`                    | `?`                    | Show or close the key help                        |
+| `app.news`                    | `N`                    | Show or close the news about tui-trello           |
+| `app.search`                  | `/`                    | Search every board on Trello                      |
+| `app.quit`                    | `q`                    | Quit                                              |
+| `chord.top`                   | `g g`                  | Jump to the first row                             |
+| `chord.next_view`             | `g t`                  | Go to the next view                               |
+| `chord.previous_view`         | `g T`                  | Go to the previous view                           |
+| `card.move`                   | `m`                    | Move the card to another list                     |
+| `card.comment`                | `c`                    | Write a comment                                   |
+| `card.description`            | `e`                    | Edit the description                              |
+| `card.labels`                 | `t`                    | Put labels on the card or take them off           |
+| `card.checklist`              | `x`                    | Tick checklist items, add items                   |
+| `card.attachments`            | `a`                    | Attachments: open, add                            |
+| `card.reply`                  | `C`                    | Reply to a comment                                |
+| `card.react`                  | `R`                    | React to a comment                                |
+| `card.copy_link`              | `y`                    | Copy the card's link                              |
+| `card.copy_comment_link`      | `Y`                    | Copy the link to a comment                        |
+| `card.open`                   | `o`                    | Open the card in the web browser                  |
+| `card.follow_link`            | `L`                    | Follow a link on the card                         |
+| `card.archive`                | `A`                    | Archive the card (asks first)                     |
+| `card.delete`                 | `D`                    | Delete the card for good (asks first)             |
+| `card.edit_comment`           | `E`                    | Edit one of your comments                         |
+| `card.delete_comment`         | `d`                    | Delete one of your comments (asks first)          |
+| `list.filter`                 | `f`                    | Filter the cards on screen                        |
+| `list.clear_filter`           | `esc`                  | Clear the filter                                  |
+| `list.new_card`               | `n`                    | Make a new card                                   |
+| `list.open`                   | `l, right`             | Open the card                                     |
+| `board.copy_link`             | `B`                    | Copy the board's link                             |
+| `browser.in`                  | `l, right`             | Into the cards; open a card                       |
+| `browser.out`                 | `h, left`              | Back to the lists                                 |
+| `triage.sort`                 | `s`                    | Cycle the sort                                    |
+| `mywork.preview`              | `p`                    | Show or hide the preview                          |
+| `card_screen.back`            | `esc, q, h, left`      | Close the card                                    |
+| `notifications.mark_read`     | `d`                    | Mark the notification read                        |
+| `notifications.mark_all_read` | `D`                    | Mark every notification read                      |
+| `notifications.toggle_read`   | `u`                    | Hide or show the ones you've read                 |
+| `help.close`                  | `esc, q`               | Close the key help                                |
+| `help.all`                    | `a`                    | Every key, or just this view's                    |
+| `news.close`                  | `esc, q`               | Close the news                                    |
+| `preview.close`               | `esc, q`               | Close the link preview                            |
+| `preview.follow`              | `enter`                | Follow the link                                   |
+| `popup.open_in_browser`       | `ctrl+o`               | Open the link in the web browser                  |
+| `popup.copy_link`             | `ctrl+y`               | Copy the link                                     |
+| `popup.preview`               | `alt+p`                | Preview the highlighted link or result            |
+| `picker.close`                | `esc`                  | Close the popup                                   |
+| `picker.down`                 | `ctrl+j, down, ctrl+n` | Next row                                          |
+| `picker.up`                   | `ctrl+k, up, ctrl+p`   | Previous row                                      |
+| `attachments.save`            | `ctrl+s`               | Say how to save the file (open it in the browser) |
+| `editor.cancel`               | `esc`                  | Close the editor (a draft is kept)                |
+| `editor.enter`                | `enter`                | Send (a new line in a description)                |
+| `editor.save`                 | `ctrl+s`               | Save                                              |
+| `editor.mention`              | `tab`                  | Pick the @mention                                 |
+| `editor.mention_down`         | `down`                 | Next @mention                                     |
+| `editor.mention_up`           | `up`                   | Previous @mention                                 |
+| `editor.newline`              | `alt+enter, ctrl+j`    | Start a new line                                  |
+| `editor.attach`               | `ctrl+o`               | Attach a file                                     |
+| `confirm.yes`                 | `y`                    | Confirm                                           |
+| `confirm.no`                  | `n, esc`               | Cancel                                            |
 <!-- /keys-table -->
+
+## News
+
+tui-trello shows news about itself, such as a new release or a change to how you log in. A short check in the
+background, at most once an hour, reads `remote/newsfeed.md` from this repository's `main` branch on GitHub. When there
+is news you haven't seen, a toast says so and `✦ 1 news (N)` appears in the top bar; `N` opens the news, and marks it
+seen. `N` again, `esc` or `q` closes it. The news is plain text: its links are not clickable.
+
+To turn it off, put `enabled = false` under `[remote]` in `config.toml`, or start with `tui-trello --no-remote`. The
+app then makes no request to GitHub and ignores any copy it saved. See [docs/remote.md](docs/remote.md) for the
+format, and what the file can and can't change.
 
 ## Development
 
-Run from source (the package is installed editable, so code changes apply on the next start):
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setting up, running, testing and the commit style, and
+[docs/architecture.md](docs/architecture.md) for how the code is laid out and how to add a feature.
+[docs/tui-designs.md](docs/tui-designs.md) has the interface designs, built and proposed.
 
 ```sh
-source venv/bin/activate
-python -m tui_trello --demo         # or: tui-trello --demo / tui-trello login / tui-trello
+python -m venv venv && venv/bin/pip install -e '.[dev]'
+venv/bin/python -m tui_trello --demo
+venv/bin/pytest                     # unit tests and keyboard-driven UI tests, no network
+venv/bin/ruff check .
 ```
 
 With Textual's dev tools, use two terminals:
@@ -373,10 +429,51 @@ textual run --dev -c tui-trello --demo          # terminal 2: the app, connected
 The app takes over the terminal, so `print()` output and tracebacks from workers only show up in the console. Quit
 with `q` and start again to pick up code changes.
 
-```sh
-venv/bin/pytest                     # unit tests and keyboard-driven UI tests, no network
-venv/bin/python scripts/screenshots.py   # regenerate docs/screenshots from the demo data
-```
+## Screenshots
 
-See [docs/architecture.md](docs/architecture.md) for how the code is laid out and how to add a feature, and
-[docs/tui-designs.md](docs/tui-designs.md) for the interface designs, built and proposed.
+All generated from the demo data (`python scripts/screenshots.py`).
+
+![triage](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/triage.svg)
+
+![triage-filter](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/triage-filter.svg)
+
+![mywork-nopreview](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/mywork-nopreview.svg)
+
+![card](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/card.svg)
+
+![arabic-card](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/arabic-card.svg)
+
+![arabic-mywork](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/arabic-mywork.svg)
+
+![arabic-triage](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/arabic-triage.svg)
+
+![help](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/help.svg)
+
+![labels](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/labels.svg)
+
+![move-picker](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/move-picker.svg)
+
+![palette](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/palette.svg)
+
+![loading](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/loading.svg)
+
+## Privacy
+
+tui-trello talks to Trello and, unless you turn it off (see News), fetches one public file from
+`raw.githubusercontent.com`: a plain GET with no identifiers, no version and no cookies, so GitHub sees your IP address
+as it would for any web request. It stores your login, drafts, preferences and a copy of that file on your
+machine, readable only by you. It sends no telemetry.
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome: read [CONTRIBUTING.md](CONTRIBUTING.md) first, and please follow the
+[code of conduct](CODE_OF_CONDUCT.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Security
+
+To report a vulnerability, use GitHub's private vulnerability reporting (the Security tab of the repository), not a
+public issue. See [SECURITY.md](SECURITY.md) for what the app stores and what it fetches.
+
+## License
+
+[MIT](LICENSE) (c) 2026 Phil Nicholls.

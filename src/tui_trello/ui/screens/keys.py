@@ -41,6 +41,7 @@ KEYS = [
         ("{triage.sort}", "cycle sort: list, due date, last activity", {"triage"}),
         ("{mywork.preview}", "show or hide the preview", {"mywork"}),
         ("{app.refresh}", "reload"),
+        ("{app.news}", "news about tui-trello (shown when there is some you haven't seen)"),
     ]),
     ("Cards", CARDS, [
         ("{list.new_card}", "new card: on the highlighted list (in triage and my work, pick the list first); the "
@@ -56,9 +57,9 @@ KEYS = [
                              "checklist"),
         ("{app.done_items}", "show or hide the ticked items of every checklist (hidden at first; remembered)",
          {"browser", "mywork", "card"}),
-        ("{card.attachments}", "attachments: enter opens one in the browser, {attachments.save} saves it to "
-                               "Downloads, {popup.copy_link} copies its link; attach a file, or paste a URL to "
-                               "attach a link"),
+        ("{card.attachments}", "attachments: enter opens one in the browser, where you can save a file "
+                               "({attachments.save} reminds you), {popup.copy_link} copies its link; attach a file, "
+                               "or paste a URL to attach a link"),
         ("{card.reply}", "reply to a comment: it starts with a quote of it and @mentions its author; for a long "
                          "one, pick what to quote"),
         ("{card.react}", "react to a comment: pick it, then an emoji; enter on one you gave takes it off"),

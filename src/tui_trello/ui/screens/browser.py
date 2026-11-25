@@ -19,6 +19,7 @@ from tui_trello.ui.bidi import visual
 from tui_trello.ui.screens.base import FILTER_HELP, BoardScreen, TopBar, index_of
 from tui_trello.ui.widgets.bell import Bell
 from tui_trello.ui.widgets.card_view import CardView
+from tui_trello.ui.widgets.news_badge import NewsBadge
 from tui_trello.ui.widgets.spinner import Spinner
 
 
@@ -55,6 +56,7 @@ class BrowserScreen(BoardScreen):
         with TopBar():
             yield Static(id="crumbs")
             yield Bell()
+            yield NewsBadge()
             yield Spinner()
         yield Input(id="filter", placeholder=keymap.of(self.app).fill(FILTER_HELP))
         with Horizontal(id="body"):

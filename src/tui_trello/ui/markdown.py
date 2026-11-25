@@ -71,11 +71,13 @@ class Link:
     stored: str = field(default="", compare=False)  # the text as written (shortcodes unshown), for a picker to search
 
 
-def render(source: str, *, clickable: bool = False) -> RenderableType:
+def render(source: str, *, clickable: bool = False, hyperlinks: bool = True) -> RenderableType:
     """The renderable for a Markdown description or comment. With `clickable`, a click on a link or image runs the
-    app's `open_link` action."""
+    app's `open_link` action. Without `hyperlinks`, links are drawn as styled text only, with no terminal hyperlink
+    (OSC 8) hiding the target, which is shown in plain text after the link text: for text from outside, such as the
+    news."""
     root = SyntaxTreeNode(PARSER.parse(source))
-    return Group(*_spaced(_blocks(root.children, depth=0, clickable=clickable)))
+    return Group(*_spaced(_blocks(root.children, 0, clickable, hyperlinks)))
 
 
 def inline(source: str, style: Style = Style(), *, clickable: bool = False) -> Text:
@@ -130,38 +132,40 @@ def _spaced(blocks: list[RenderableType]) -> list[RenderableType]:
     return spaced
 
 
-def _blocks(nodes: list[SyntaxTreeNode], depth: int, clickable: bool = False) -> list[RenderableType]:
+def _blocks(nodes: list[SyntaxTreeNode], depth: int, clickable: bool = False,
+            hyperlinks: bool = True) -> list[RenderableType]:
     blocks: list[RenderableType] = []
     for node in nodes:
         if node.type == "paragraph":
-            blocks.append(BidiText(_inline(node.children[0], clickable=clickable)))
+            blocks.append(BidiText(_inline(node.children[0], clickable=clickable, hyperlinks=hyperlinks)))
         elif node.type == "heading":
             style = HEADINGS.get(int(node.tag[1:]), Style(bold=True))
-            blocks.append(BidiText(_inline(node.children[0], style, clickable)))
+            blocks.append(BidiText(_inline(node.children[0], style, clickable, hyperlinks)))
         elif node.type in ("bullet_list", "ordered_list"):
-            blocks.append(_list(node, depth, clickable))
+            blocks.append(_list(node, depth, clickable, hyperlinks))
         elif node.type == "blockquote":
-            blocks.append(_hanging(Text(QUOTE, MUTED), Group(*_blocks(node.children, depth, clickable)), _plain(node),
-                                   style=MUTED))
+            quoted = Group(*_blocks(node.children, depth, clickable, hyperlinks))
+            blocks.append(_hanging(Text(QUOTE, MUTED), quoted, _plain(node), style=MUTED))
         elif node.type in ("fence", "code_block"):
             blocks.append(_hanging(Text(CODE_BAR, MUTED), Text(node.content.rstrip("\n"), CODE), ""))
         elif node.type == "hr":
             blocks.append(Rule(style=MUTED))
         elif node.type == "table":
-            blocks.append(_table(node, clickable))
+            blocks.append(_table(node, clickable, hyperlinks))
         elif node.type == "html_block":
             blocks.append(BidiText(Text(node.content.rstrip("\n"))))
         elif node.children:
-            blocks.extend(_blocks(node.children, depth, clickable))
+            blocks.extend(_blocks(node.children, depth, clickable, hyperlinks))
     return blocks
 
 
-def _list(node: SyntaxTreeNode, depth: int, clickable: bool) -> RenderableType:
+def _list(node: SyntaxTreeNode, depth: int, clickable: bool, hyperlinks: bool) -> RenderableType:
     start = int(node.attrs.get("start", 1))
     items = []
     for n, item in enumerate(node.children):
         marker = f"{start + n}. " if node.type == "ordered_list" else BULLETS[depth % len(BULLETS)]
-        items.append(_hanging(Text(marker, MUTED), Group(*_blocks(item.children, depth + 1, clickable)), _plain(item)))
+        body = Group(*_blocks(item.children, depth + 1, clickable, hyperlinks))
+        items.append(_hanging(Text(marker, MUTED), body, _plain(item)))
     return Group(*items)
 
 
@@ -181,22 +185,24 @@ def _hanging(marker: Text, body: RenderableType, plain: str, style: Style | None
     return grid
 
 
-def _table(node: SyntaxTreeNode, clickable: bool) -> Table:
+def _table(node: SyntaxTreeNode, clickable: bool, hyperlinks: bool) -> Table:
     table = Table(box=box.SIMPLE_HEAD, show_edge=False, pad_edge=False, header_style=Style(bold=True))
     head, *bodies = node.children
     for cell in head.children[0].children:
-        table.add_column(_cell(cell, clickable))
+        table.add_column(_cell(cell, clickable, hyperlinks))
     for body in bodies:
         for row in body.children:
-            table.add_row(*(_cell(cell, clickable) for cell in row.children))
+            table.add_row(*(_cell(cell, clickable, hyperlinks) for cell in row.children))
     return table
 
 
-def _cell(cell: SyntaxTreeNode, clickable: bool) -> BidiText:
-    return BidiText(_inline(cell.children[0], clickable=clickable) if cell.children else Text(""))
+def _cell(cell: SyntaxTreeNode, clickable: bool, hyperlinks: bool) -> BidiText:
+    if not cell.children:
+        return BidiText(Text(""))
+    return BidiText(_inline(cell.children[0], clickable=clickable, hyperlinks=hyperlinks))
 
 
-def _inline(node: SyntaxTreeNode, style: Style = Style(), clickable: bool = False) -> Text:
+def _inline(node: SyntaxTreeNode, style: Style = Style(), clickable: bool = False, hyperlinks: bool = True) -> Text:
     text = Text()
     for child in node.children:
         if child.type == "text":
@@ -207,17 +213,20 @@ def _inline(node: SyntaxTreeNode, style: Style = Style(), clickable: bool = Fals
         elif child.type == "code_inline":
             text.append(child.content, style + CODE)
         elif child.type in INLINE:
-            text.append_text(_inline(child, style + INLINE[child.type], clickable))
+            text.append_text(_inline(child, style + INLINE[child.type], clickable, hyperlinks))
         elif child.type == "link":
             href = child.attrs.get("href")
-            text.append_text(_inline(child, style + LINK + Style(link=str(href) if href else None)
-                                     + (_click(href) if clickable else Style()), clickable))
+            hyperlink = Style(link=str(href) if href else None) if hyperlinks else Style()
+            text.append_text(_inline(child, style + LINK + hyperlink
+                                     + (_click(href) if clickable else Style()), clickable, hyperlinks))
+            if href and not hyperlinks and child.markup not in ("linkify", "autolink"):
+                text.append(f" ({href})", style)  # no hyperlink to hide the target in: show it
         elif child.type == "image":
             src = child.attrs.get("src", "")
             alt = _plain(child) or str(src)
             text.append(f"[image: {alt}]", style + MUTED + (LINK + _click(src) if clickable and src else Style()))
         elif child.children:
-            text.append_text(_inline(child, style, clickable))
+            text.append_text(_inline(child, style, clickable, hyperlinks))
         else:
             text.append(child.content, style)
     return text

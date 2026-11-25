@@ -121,3 +121,14 @@ def test_clickable_inline_and_in_blocks() -> None:
 def test_rtl_link_keeps_its_click() -> None:
     found = clicks(render("انظر [البطاقة](https://trello.com/c/abc) من فضلك", clickable=True))
     assert found and set(found.values()) == {("app.open_link", ("https://trello.com/c/abc",))}
+
+
+def test_hyperlinks_off_reach_links_in_lists_quotes_and_tables() -> None:
+    source = "- [a](https://x.example/a)\n\n> [b](https://x.example/b)\n\n| h |\n| - |\n| [c](https://x.example/c) |\n"
+    for hyperlinks in (True, False):
+        console = Console(width=60, file=io.StringIO(), force_terminal=True)
+        console.print(render(source, hyperlinks=hyperlinks))
+        out = console.file.getvalue()
+        assert ("\x1b]8;" in out) is hyperlinks
+        for name in "abc":
+            assert (f"({'https://x.example/' + name})" in out) is (not hyperlinks)
