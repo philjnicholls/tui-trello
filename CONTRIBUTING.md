@@ -63,7 +63,8 @@ run through `ruff format`: match the compact style of the code around yours.
   between the `<!-- keys-table -->` markers. `tests/test_keymap.py` checks the README against the code; regenerate the
   table with `python -c "from tui_trello.ui import keymap; print(keymap.markdown_table())"`.
 - **Screenshots**, after a change to how a view looks: `venv/bin/python scripts/screenshots.py` regenerates
-  `docs/screenshots/` from the demo data.
+  `docs/screenshots/` from the demo data, and `venv/bin/python scripts/demo_gif.py` records the README's
+  `demo.gif` (it needs `google-chrome` and `ffmpeg`).
 - **The emoji table**: `scripts/emoji_codes.py` (the one script that downloads anything; run it by hand).
 - **The changelog.** Add a line under `[Unreleased]` in `CHANGELOG.md` for anything a user would notice.
 

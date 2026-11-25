@@ -9,7 +9,7 @@ A keyboard-first terminal client for Trello, built on [Textual](https://textual.
 and write cards and comments, search every board, and keep an eye on your notifications without leaving the terminal
 or reaching for the mouse.
 
-![browser](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/browser.svg)
+![tui-trello demo](https://raw.githubusercontent.com/philjnicholls/tui-trello/main/docs/screenshots/demo.gif)
 
 ## Features
 
