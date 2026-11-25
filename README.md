@@ -462,7 +462,7 @@ All generated from the demo data (`python scripts/screenshots.py`).
 tui-trello talks to Trello and, unless you turn it off (see News), fetches one public file from
 `raw.githubusercontent.com`: a plain GET with no identifiers, no version and no cookies, so GitHub sees your IP address
 as it would for any web request. It stores your login, drafts, preferences and a copy of that file on your
-machine, readable only by you. It sends no telemetry.
+machine, readable only by you. It sends no telemetry. The full policy is in [PRIVACY.md](PRIVACY.md).
 
 ## Contributing
 
