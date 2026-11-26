@@ -7,6 +7,8 @@ All notable changes to tui-trello are listed here, newest first. The format foll
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-26
+
 ### Added
 
 - Card members: join or leave a card (`J`), add or remove board members (`M`); my work follows at once. Watch or
@@ -35,5 +37,6 @@ First public release.
 - News about tui-trello, shown with `N`, read from the public repository (turn off with `[remote] enabled = false` or
   `--no-remote`).
 
-[Unreleased]: https://github.com/philjnicholls/tui-trello/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/philjnicholls/tui-trello/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/philjnicholls/tui-trello/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/philjnicholls/tui-trello/releases/tag/v0.1.0
