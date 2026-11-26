@@ -163,7 +163,7 @@ def test_version_prints_the_version_and_exits(capsys) -> None:
     with pytest.raises(SystemExit) as exit_:
         cli.main(["--version"])
     assert exit_.value.code == 0
-    assert capsys.readouterr().out == f"tui-trello {__version__}\n" and __version__ == "0.1.0"
+    assert capsys.readouterr().out == f"tui-trello {__version__}\n" and __version__ == "0.2.0"
 
 
 # -- login ----------------------------------------------------------------------------------------------------------
