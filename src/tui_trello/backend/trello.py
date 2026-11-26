@@ -34,7 +34,8 @@ CHECK_ITEM_FIELDS = "name,state,pos"
 
 ATTACHMENT_FIELDS = "name,url,isUpload,bytes,mimeType,date,fileName"
 
-CARD_FIELDS = "name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges,closed"
+CARD_FIELDS = ("name,desc,idList,idBoard,labels,idMembers,due,dueComplete,pos,url,dateLastActivity,badges,closed,"
+               "subscribed")
 
 SEARCH_LIMIT = 50  # cards asked of each of a search's two requests
 
@@ -217,6 +218,25 @@ class TrelloBackend:
     async def remove_label(self, card: Card, label: Label) -> Card:
         await self._request("DELETE", f"/cards/{card.id}/idLabels/{label.id}")
         return replace(card, labels=tuple(lb for lb in card.labels if lb.id != label.id))
+
+    async def add_member(self, card: Card, member_id: str) -> Card:
+        await self._request("POST", f"/cards/{card.id}/idMembers", value=member_id)
+        try:
+            return await self.card(card.id)  # the reply's shape is undocumented, and Trello may change `subscribed` too
+        except BackendError:  # the change is made; don't report it failed
+            return replace(card, member_ids=(*card.member_ids, member_id))
+
+    async def remove_member(self, card: Card, member_id: str) -> Card:
+        await self._request("DELETE", f"/cards/{card.id}/idMembers/{member_id}")
+        try:
+            return await self.card(card.id)
+        except BackendError:
+            return replace(card, member_ids=tuple(m for m in card.member_ids if m != member_id))
+
+    async def set_watching(self, card: Card, watching: bool) -> Card:
+        data = await self._request("PUT", f"/cards/{card.id}", subscribed="true" if watching else "false",
+                                   fields=CARD_FIELDS)
+        return Card.from_api(data)
 
     async def create_label(self, board_id: str, name: str, color: str | None) -> Label:
         params = {"name": name, "idBoard": board_id}

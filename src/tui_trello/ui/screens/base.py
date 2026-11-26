@@ -1,9 +1,9 @@
 """Behaviour shared by the screens.
 
 - :class:`CardActionsScreen`: verbs on "the current card" (move, comment, description, labels, checklist,
-  attachments, reply or react to a comment, edit or delete your comment, archive or delete the card, copy a link,
-  open in browser). A new card feature (assign, due date, ...) is added here once, as a binding plus an action, and
-  works in every view. Subclasses only say which card is current.
+  attachments, members, join or leave, watch, reply or react to a comment, edit or delete your comment, archive or
+  delete the card, copy a link, open in browser). A new card feature (assign, due date, ...) is added here once, as
+  a binding plus an action, and works in every view. Subclasses only say which card is current.
 - :class:`ListScreen`: a card list with an `f` filter bar using the query language in `tui_trello.query`, and `n`
   to make a new card: subclasses say which list it goes on and put the cursor on it once made.
 - :class:`BoardScreen`: a list screen drawing the open board, redrawn whenever the store says it changed.
@@ -43,6 +43,7 @@ from tui_trello.ui.screens.picker import (
     ConfirmScreen,
     LabelPickerScreen,
     LinkPickerScreen,
+    MemberPickerScreen,
     PickerScreen,
     TextPromptScreen,
 )
@@ -70,6 +71,9 @@ class CardActionsScreen(Screen):
         Binding("e", "edit_description", "Description", id="card.description"),
         Binding("t", "labels", "Labels", id="card.labels"),
         Binding("x", "checklist", "Checklist", id="card.checklist"),
+        Binding("M", "members", "Members", show=False, id="card.members"),
+        Binding("J", "join", "Join/leave", show=False, id="card.join"),
+        Binding("w", "watch", "Watch", show=False, id="card.watch"),
         Binding("a", "attachments", "Attachments", show=False, id="card.attachments"),
         Binding("C", "reply", "Reply", show=False, id="card.reply"),
         Binding("R", "react", "React", show=False, id="card.react"),
@@ -162,6 +166,43 @@ class CardActionsScreen(Screen):
         if card := self.current_card():
             self.app.push_screen(LabelPickerScreen(card.id))
 
+    def action_members(self) -> None:
+        if card := self.current_card():
+            def closed(_result) -> None:
+                if not self.app.store.find_card(card.id):
+                    self.card_gone(card)
+
+            self.app.push_screen(MemberPickerScreen(card.id), closed)
+
+    @work(group="members")
+    async def action_join(self) -> None:
+        card = self.current_card()
+        if not card:
+            return
+        store = self.app.store
+        try:
+            updated = await store.join_or_leave(card)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error", markup=False)
+            return
+        verb = "joined" if store.me_id in updated.member_ids else "left"
+        self.notify(f"You {verb} “{with_emoji(card.name)}”", markup=False)
+        if not store.find_card(card.id):
+            self.card_gone(card)
+
+    @work(group="watch")
+    async def action_watch(self) -> None:
+        card = self.current_card()
+        if not card:
+            return
+        try:
+            updated = await self.app.store.toggle_watching(card)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error", markup=False)
+            return
+        name = with_emoji(card.name)
+        self.notify(f"Watching “{name}”" if updated.subscribed else f"Stopped watching “{name}”", markup=False)
+
     def action_checklist(self) -> None:
         if card := self.current_card():
             self.app.push_screen(ChecklistPickerScreen(card.id))
@@ -227,7 +268,8 @@ class CardActionsScreen(Screen):
         self.card_gone(card)
 
     def card_gone(self, card: Card) -> None:
-        """Called once the card has been archived or deleted. A screen showing only that card closes itself."""
+        """Called once the card has been archived or deleted, or has left every loaded snapshot (you left it and only
+        my work held it). A screen showing only that card closes itself."""
 
     @work
     async def action_edit_comment(self) -> None:

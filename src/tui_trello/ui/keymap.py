@@ -43,6 +43,8 @@ WHAT = {
     "chord.previous_view": "Go to the previous view",
     "card.move": "Move the card to another list", "card.comment": "Write a comment",
     "card.description": "Edit the description", "card.labels": "Put labels on the card or take them off",
+    "card.members": "Put board members on the card or take them off",
+    "card.join": "Join the card, or leave it", "card.watch": "Watch the card, or stop watching it",
     "card.checklist": "Tick checklist items, add items", "card.attachments": "Attachments: open, add",
     "card.reply": "Reply to a comment", "card.react": "React to a comment", "card.copy_link": "Copy the card's link",
     "card.copy_comment_link": "Copy the link to a comment", "card.open": "Open the card in the web browser",

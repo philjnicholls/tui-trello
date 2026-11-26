@@ -7,6 +7,12 @@ All notable changes to tui-trello are listed here, newest first. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- Card members: join or leave a card (`J`), add or remove board members (`M`); my work follows at once. Watch or
+  unwatch a card (`w`), shown with 👀. `M`, `J` and `w` are new default keys: a `[keys]` override that already uses one
+  of them is refused, so move it to another key.
+
 ## [0.1.0] - 2026-11-25
 
 First public release.

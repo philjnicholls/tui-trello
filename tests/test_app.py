@@ -37,6 +37,7 @@ from tui_trello.ui.screens.picker import (
     FilePickerScreen,
     LabelPickerScreen,
     LinkPickerScreen,
+    MemberPickerScreen,
     PickerScreen,
     TextPromptScreen,
 )
@@ -3102,7 +3103,7 @@ def keyed_app(backend, **keys) -> TrelloApp:
 
 
 async def test_overridden_key_works_everywhere(backend) -> None:
-    app = keyed_app(backend, **{"card.move": "M"})
+    app = keyed_app(backend, **{"card.move": "Z"})
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         assert app.keymap.warnings == []
@@ -3115,7 +3116,7 @@ async def test_overridden_key_works_everywhere(backend) -> None:
             await pilot.press("m")
             await settle(pilot)
             assert not isinstance(app.screen, PickerScreen), view
-            await pilot.press("M")
+            await pilot.press("Z")
             await settle(pilot)
             assert isinstance(app.screen, PickerScreen) and "Move" in app.screen.title_text, view
             await pilot.press("escape")
@@ -3129,16 +3130,16 @@ async def test_overridden_key_works_everywhere(backend) -> None:
         await pilot.press("m")
         await settle(pilot)
         assert isinstance(app.screen, CardScreen)
-        await pilot.press("M")
+        await pilot.press("Z")
         await settle(pilot)
         assert isinstance(app.screen, PickerScreen)
         await pilot.press("escape")
         await settle(pilot)
         moving = [b for b in app.screen.active_bindings.values() if b.binding.action == "move_card"]
-        assert [b.binding.key for b in moving] == ["M"]
+        assert [b.binding.key for b in moving] == ["Z"]
         await pilot.press("question_mark")
         await settle(pilot)
-        assert any("M" in line and "move to another list" in line for line in screen_lines(app))
+        assert any("Z" in line and "move to another list" in line for line in screen_lines(app))
 
 
 async def test_override_reaches_popups(backend) -> None:
@@ -3172,10 +3173,10 @@ async def search_for_in_open_popup(app, pilot, text: str) -> None:
 
 
 async def test_shared_id_changes_every_place(backend) -> None:
-    app = keyed_app(backend, **{"app.down": "w"})
+    app = keyed_app(backend, **{"app.down": "Z"})
     async with app.run_test(size=(120, 14)) as pilot:
         await pilot.pause()
-        await pilot.press("w")
+        await pilot.press("Z")
         await settle(pilot)
         assert app.screen.query_one("#lists", OptionList).highlighted == 1
         await pilot.press("j")
@@ -3188,7 +3189,7 @@ async def test_shared_id_changes_every_place(backend) -> None:
         await pilot.press("j")
         await settle(pilot)
         assert view.scroll_y == 0
-        await pilot.press("w")
+        await pilot.press("Z")
         await settle(pilot)
         assert view.scroll_y > 0
 
@@ -3472,3 +3473,435 @@ async def test_news_text_is_not_markup(tmp_path, backend) -> None:
         await pilot.pause()
         text = rendered_text(app.screen.content())
         assert "A [bold]loud[/bold] title" in text and "Last fetched" in text
+
+
+async def test_join_and_leave_card(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")  # Inbox, first card: no members
+        card = app.screen.current_card()
+        assert card.member_ids == ()
+        await pilot.press("J")
+        await settle(pilot)
+        assert app.store.snapshot.card(card.id).member_ids == ("m1",)
+        await pilot.press("J")
+        await settle(pilot)
+        assert app.store.snapshot.card(card.id).member_ids == ()
+        assert toasts(app) == [f"You joined “{card.name}”", f"You left “{card.name}”"]
+
+
+async def test_join_card_adds_it_to_my_work(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("1")
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("J")
+        await settle(pilot)
+        assert app.store.work.card(card.id) is not None
+        await pilot.press("J")
+        await settle(pilot)
+        assert app.store.work.card(card.id) is None
+
+
+async def test_join_before_my_work_is_loaded(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        assert app.store.work is None
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("J")
+        await settle(pilot)
+        assert app.store.work is None
+        await pilot.press("3")
+        await settle(pilot)
+        assert card.id in app.screen.cards_by_option
+
+
+async def test_leave_card_from_my_work_drops_it(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        while app.screen.current_card().board_id != app.store.snapshot.board.id:
+            await pilot.press("j")
+        card = app.screen.current_card()
+        before = len(app.store.work.cards)
+        await pilot.press("J")
+        await settle(pilot)
+        assert card.id not in [c.id for c in app.store.work.cards]
+        assert card.id not in app.screen.cards_by_option
+        assert f"  {before - 1} cards" in "\n".join(screen_lines(app))
+        assert "m1" not in app.store.snapshot.card(card.id).member_ids
+
+
+async def test_leave_from_full_screen_card_goes_back(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        while app.screen.current_card().board_id == app.store.snapshot.board.id:
+            await pilot.press("j")
+        card = app.screen.current_card()
+        await pilot.press("l")
+        await pilot.pause()
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("J")
+        await settle(pilot)
+        assert isinstance(app.screen, MyWorkScreen)
+        assert app.store.work.card(card.id) is None
+        assert toasts(app) == [f"You left “{card.name}”"]
+
+
+async def test_leave_from_full_screen_card_through_the_popup(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        while app.screen.current_card().board_id == app.store.snapshot.board.id:
+            await pilot.press("j")
+        card = app.screen.current_card()
+        await pilot.press("l")
+        await pilot.pause()
+        await pilot.press("M")
+        await settle(pilot)
+        assert isinstance(app.screen, MemberPickerScreen)
+        assert "you" in app.screen.choices[0].hint
+        await pilot.press("enter")  # Ada, first
+        await settle(pilot)
+        assert isinstance(app.screen, MyWorkScreen)
+        assert app.store.work.card(card.id) is None
+
+
+async def test_leave_full_screen_card_of_open_board_stays(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.press("l")
+        await pilot.pause()
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("J")
+        await settle(pilot)
+        assert isinstance(app.screen, CardScreen)
+        await pilot.press("J")
+        await settle(pilot)
+        assert isinstance(app.screen, CardScreen)
+
+
+async def test_member_picker_toggles_members(app) -> None:
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("M")
+        await settle(pilot)
+        picker = app.screen
+        assert isinstance(picker, MemberPickerScreen)
+        assert picker.choices[0].value.full_name == "Ada Lovelace" and "you" in picker.choices[0].hint
+        await pilot.press(*"grace", "enter")
+        await settle(pilot)
+        assert app.store.find_card(card.id).member_ids == ("m2",)
+        await pilot.press("enter")
+        await settle(pilot)
+        assert app.store.find_card(card.id).member_ids == ()
+        assert app.screen is picker
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, MemberPickerScreen)
+
+
+async def test_watch_card(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("1")
+        await pilot.pause()
+        work = list(app.store.work.cards)
+        await pilot.press("l")
+        card = app.screen.current_card()
+        assert not card.subscribed
+        await pilot.press("w")
+        await settle(pilot)
+        assert app.store.snapshot.card(card.id).subscribed
+        assert "👀" in app.screen.query_one("#card-meta").render().plain
+        await pilot.press("w")
+        await settle(pilot)
+        assert not app.store.snapshot.card(card.id).subscribed
+        assert app.store.work.cards == work
+
+
+class FailingMembers(DemoBackend):
+    async def add_member(self, card, member_id):
+        raise BackendError("No access.")
+
+
+async def test_member_change_error_is_shown() -> None:
+    app = TrelloApp(FailingMembers(), Settings(default_board="b-product"))
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("1")
+        await pilot.pause()
+        work = list(app.store.work.cards)
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("J")
+        await settle(pilot)
+        assert toasts(app) == ["No access."]
+        assert app.store.snapshot.card(card.id) == card
+        assert app.store.work.cards == work
+
+
+class SlowMembers(DemoBackend):
+    """Membership and watch changes that take a moment, and are recorded, so quick key presses overlap."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    async def add_member(self, card, member_id):
+        self.calls.append("add")
+        await asyncio.sleep(0.05)
+        return await super().add_member(card, member_id)
+
+    async def remove_member(self, card, member_id):
+        self.calls.append("remove")
+        await asyncio.sleep(0.05)
+        return await super().remove_member(card, member_id)
+
+    async def set_watching(self, card, watching):
+        self.calls.append(f"watch={watching}")
+        await asyncio.sleep(0.05)
+        return await super().set_watching(card, watching)
+
+
+async def test_double_join_toggles_twice() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        app.screen.action_join()  # both before the first finishes, as a quick double press does
+        app.screen.action_join()
+        await app.workers.wait_for_complete()
+        await settle(pilot)
+        assert backend.calls == ["add", "remove"]
+        assert app.store.snapshot.card(card.id).member_ids == card.member_ids
+        assert app.store._card_turns == {}
+
+
+async def test_double_watch_toggles_twice() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        app.screen.action_watch()
+        app.screen.action_watch()
+        await app.workers.wait_for_complete()
+        await settle(pilot)
+        assert backend.calls == ["watch=True", "watch=False"]
+        assert app.store.snapshot.card(card.id).subscribed == card.subscribed
+        assert app.store._card_turns == {}
+
+
+async def test_member_picker_keeps_every_toggle() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        await pilot.press("M")
+        await settle(pilot)
+        grace = next(c.value for c in app.screen.choices if c.value.username == "grace")
+        app.screen.apply(grace)
+        app.screen.apply(grace)
+        await app.workers.wait_for_complete()
+        await settle(pilot)
+        assert backend.calls == ["add", "remove"]
+        assert app.store.find_card(card.id).member_ids == card.member_ids
+        assert app.store._card_turns == {}
+
+
+async def test_double_leave_of_a_my_work_only_card_toggles_twice() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        while app.screen.current_card().board_id != app.store.snapshot.board.id:
+            await pilot.press("j")
+        card = app.screen.current_card()
+        assert "m1" in card.member_ids
+        app.store.snapshot.remove_card(card.id)  # only my work holds it now
+        await asyncio.gather(app.store.join_or_leave(card), app.store.join_or_leave(card))
+        assert backend.calls == ["remove", "add"]
+        assert "m1" in app.store.work.card(card.id).member_ids
+        assert app.store._card_turns == {}
+
+
+class ReadBack(SlowMembers):
+    """Builds each result from the card it was given, as Trello's read-back does, not from a stored copy."""
+
+    async def add_member(self, card, member_id):
+        self.calls.append("add")
+        await asyncio.sleep(0.05)
+        return replace(card, member_ids=(*card.member_ids, member_id))
+
+    async def set_watching(self, card, watching):
+        self.calls.append(f"watch={watching}")
+        await asyncio.sleep(0.05)
+        return replace(card, subscribed=watching)
+
+
+async def test_overlapping_join_and_watch_keep_both_changes() -> None:
+    backend = ReadBack()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        app.screen.action_join()
+        app.screen.action_watch()
+        await app.workers.wait_for_complete()
+        await settle(pilot)
+        now = app.store.snapshot.card(card.id)
+        assert now.member_ids != card.member_ids
+        assert now.subscribed != card.subscribed
+        assert app.store._card_turns == {}
+
+
+async def test_leave_then_toggle_with_a_fresh_card_acts_on_the_fresh_card() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        while app.screen.current_card().board_id != app.store.snapshot.board.id:
+            await pilot.press("j")
+        card = app.screen.current_card()
+        assert "m1" in card.member_ids
+        app.store.snapshot.remove_card(card.id)  # only my work holds it now
+        await app.store.join_or_leave(card)
+        assert app.store.find_card(card.id) is None
+        # Someone re-adds you; the card comes from a notification, in no snapshot, with you on it.
+        fresh = await DemoBackend.add_member(backend, card, "m1")
+        assert fresh is not card
+        await app.store.join_or_leave(fresh)
+        assert backend.calls == ["remove", "remove"]
+        assert app.store._card_turns == {}
+
+
+async def detached_card(app, pilot):
+    """A card on no loaded snapshot, as one opened from a notification or a link is: nobody on it, not watched."""
+    await pilot.pause()
+    card = next(c for c in app.store.snapshot.cards if not c.member_ids and not c.subscribed)
+    app.store.snapshot.remove_card(card.id)
+    assert app.store.find_card(card.id) is None
+    return card
+
+
+async def test_double_join_of_a_card_in_no_snapshot_toggles_twice() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        card = await detached_card(app, pilot)
+        await app.store.me()
+        first, second = await asyncio.gather(app.store.join_or_leave(card), app.store.join_or_leave(card))
+        assert backend.calls == ["add", "remove"]
+        assert "m1" in first.member_ids
+        assert "m1" not in second.member_ids
+        assert app.store._card_turns == {}
+
+
+async def test_double_watch_of_a_card_in_no_snapshot_toggles_twice() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        card = await detached_card(app, pilot)
+        await asyncio.gather(app.store.toggle_watching(card), app.store.toggle_watching(card))
+        assert backend.calls == ["watch=True", "watch=False"]
+        assert app.store._card_turns == {}
+
+
+async def test_double_member_toggle_of_a_card_in_no_snapshot_toggles_twice() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        card = await detached_card(app, pilot)
+        grace = next(m for m in await app.store.members(card.board_id) if m.username == "grace")
+        await app.store.me()
+        await asyncio.gather(app.store.toggle_member(card, grace), app.store.toggle_member(card, grace))
+        assert backend.calls == ["add", "remove"]
+        assert app.store._card_turns == {}
+
+
+async def test_leave_then_double_watch_of_a_my_work_only_card_toggles_watching_twice() -> None:
+    backend = SlowMembers()
+    app = TrelloApp(backend, Settings(default_board="b-product"))
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        while app.screen.current_card().board_id != app.store.snapshot.board.id:
+            await pilot.press("j")
+        card = app.screen.current_card()
+        assert "m1" in card.member_ids and not card.subscribed
+        app.store.snapshot.remove_card(card.id)  # only my work holds it now
+        await app.store.me()
+        await asyncio.gather(app.store.join_or_leave(card), app.store.toggle_watching(card),
+                             app.store.toggle_watching(card))
+        assert backend.calls == ["remove", "watch=True", "watch=False"]
+        assert app.store._card_turns == {}
+
+
+async def test_join_publishes_my_work_once(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("1")
+        await pilot.pause()
+        await pilot.press("l")
+        card = app.screen.current_card()
+        published: list = []
+        app.store.work_changed.subscribe(app.screen, published.append)
+        await pilot.press("J")  # join: my work gains the card
+        await settle(pilot)
+        assert app.store.work.card(card.id)
+        assert len(published) == 1
+
+
+async def test_picker_left_toast_only_for_you(app) -> None:
+    async with app.run_test(size=(140, 30)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.press("1")
+        await pilot.pause()
+        await pilot.press("l")
+        await pilot.press("M")
+        await settle(pilot)
+        add_member = app.store.backend.add_member
+
+        async def add_then_vanish(card, member_id):
+            updated = await add_member(card, member_id)
+            app.store.work.remove_card(card.id)  # a reload drops the card as the change lands
+            app.store.snapshot.remove_card(card.id)
+            return updated
+
+        app.store.backend.add_member = add_then_vanish
+        await pilot.press(*"grace", "enter")
+        await settle(pilot)
+        assert not any("You left" in t for t in toasts(app))
+        assert not isinstance(app.screen, MemberPickerScreen)

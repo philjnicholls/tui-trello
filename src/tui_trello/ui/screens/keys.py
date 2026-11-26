@@ -53,6 +53,8 @@ KEYS = [
         ("{card.description}", "edit the description: {editor.enter} new line, {editor.save} saves"),
         ("", "{editor.cancel} closes either and keeps what you wrote as a draft; empty the box to drop it"),
         ("{card.labels}", "labels: enter puts one on or takes it off; type a new name to create one"),
+        ("{card.members}", "members: enter puts a board member on the card or takes them off"),
+        ("{card.join} {card.watch}", "join the card or leave it; watch it or stop watching (👀 marks a watched card)"),
         ("{card.checklist}", "checklist: enter ticks or unticks an item; type new text to add an item or a "
                              "checklist"),
         ("{app.done_items}", "show or hide the ticked items of every checklist (hidden at first; remembered)",

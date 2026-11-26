@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import httpx
 import pytest
 
@@ -385,3 +387,67 @@ async def test_search_cards_survives_one_failing_request() -> None:
 async def test_search_cards_fails_when_both_requests_do() -> None:
     with pytest.raises(BackendError):
         await make_backend([], status=500).search_cards("passp")
+
+
+def test_card_fields_include_subscribed() -> None:
+    assert "subscribed" in CARD_FIELDS.split(",")
+
+
+def make_member_backend(requests: list[httpx.Request], status: int = 200) -> TrelloBackend:
+    read_back = {"id": "c1", "name": "Card", "idList": "l1", "idBoard": "b1", "idMembers": ["m1", "m2"],
+                 "subscribed": True}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(status, json=read_back if request.method == "GET" else {})
+
+    return TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
+
+
+async def test_add_member_reads_the_card_back() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_member_backend(requests)
+    snapshot = await make_backend([]).board_snapshot("b1")
+    card = await backend.add_member(snapshot.cards[0], "m2")
+    post, get = requests
+    assert (post.method, post.url.path, post.url.params["value"]) == ("POST", "/1/cards/c1/idMembers", "m2")
+    assert (get.method, get.url.path) == ("GET", "/1/cards/c1")
+    assert (card.member_ids, card.subscribed) == (("m1", "m2"), True)
+
+
+async def test_remove_member_reads_the_card_back() -> None:
+    requests: list[httpx.Request] = []
+    backend = make_member_backend(requests)
+    snapshot = await make_backend([]).board_snapshot("b1")
+    await backend.remove_member(snapshot.cards[0], "m1")
+    delete, get = requests
+    assert (delete.method, delete.url.path) == ("DELETE", "/1/cards/c1/idMembers/m1")
+    assert (get.method, get.url.path) == ("GET", "/1/cards/c1")
+
+
+@pytest.mark.parametrize("watching", [True, False])
+async def test_set_watching(watching: bool) -> None:
+    requests: list[httpx.Request] = []
+    backend = make_backend(requests)
+    snapshot = await backend.board_snapshot("b1")
+    await backend.set_watching(snapshot.cards[0], watching)
+    assert (requests[-1].method, requests[-1].url.path) == ("PUT", "/1/cards/c1")
+    assert requests[-1].url.params["subscribed"] == ("true" if watching else "false")
+
+
+async def test_add_member_unauthorised() -> None:
+    snapshot = await make_backend([]).board_snapshot("b1")
+    with pytest.raises(BackendError):
+        await make_member_backend([], status=401).add_member(snapshot.cards[0], "m2")
+
+
+@pytest.mark.parametrize("verb", ["add_member", "remove_member"])
+async def test_member_change_survives_a_failed_read_back(verb: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500 if request.method == "GET" else 200, json={})
+
+    backend = TrelloBackend(bearer_auth(), transport=httpx.MockTransport(handler))
+    snapshot = await make_backend([]).board_snapshot("b1")
+    card = replace(snapshot.cards[0], member_ids=("m1",))
+    updated = await getattr(backend, verb)(card, "m2" if verb == "add_member" else "m1")
+    assert updated.member_ids == (("m1", "m2") if verb == "add_member" else ())

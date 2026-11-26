@@ -53,6 +53,8 @@ def badges(card: Card, now: datetime | None = None, *, due: bool = True, unread:
     if unread:
         parts.append_text(unread_badge(unread))
         parts.append(" ")
+    if card.subscribed:
+        parts.append("👀 ")
     if card.comment_count:
         parts.append(f"✎{card.comment_count} ", style="dim")
     checked, total = card.checklist

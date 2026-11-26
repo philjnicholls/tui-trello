@@ -50,6 +50,8 @@ MEMBERS = {
 
 ME = "m1"  # the demo's logged-in member
 
+WATCHED = {"Command palette: jump to any card"}  # cards the demo member watches without being on them
+
 LABELS = {
     "bug": Label("bug", "bug", "red"),
     "feat": Label("feat", "feature", "green"),
@@ -281,6 +283,7 @@ class DemoBackend:
                     desc=(ARABIC_DESCRIPTION if rtl else DESCRIPTION) if comments else "",
                     labels=tuple(labels_by_key[label] for label in labels),
                     member_ids=tuple(members),
+                    subscribed=name in WATCHED,
                     due=end_of_day(base) + timedelta(days=due) if due is not None else None,
                     due_complete=due is not None and list_name == "Done",
                     pos=card_pos,
@@ -496,6 +499,28 @@ class DemoBackend:
     async def remove_label(self, card: Card, label: Label) -> Card:
         snapshot, current = self._find(card.id)
         updated = replace(current, labels=tuple(lb for lb in current.labels if lb.id != label.id))
+        snapshot.replace_card(updated)
+        return updated
+
+    async def add_member(self, card: Card, member_id: str) -> Card:
+        snapshot, current = self._find(card.id)
+        if member_id not in snapshot.members:
+            raise BackendError("That member isn't on this board")
+        if member_id in current.member_ids:
+            return current
+        updated = replace(current, member_ids=(*current.member_ids, member_id))
+        snapshot.replace_card(updated)
+        return updated
+
+    async def remove_member(self, card: Card, member_id: str) -> Card:
+        snapshot, current = self._find(card.id)
+        updated = replace(current, member_ids=tuple(m for m in current.member_ids if m != member_id))
+        snapshot.replace_card(updated)
+        return updated
+
+    async def set_watching(self, card: Card, watching: bool) -> Card:
+        snapshot, current = self._find(card.id)
+        updated = replace(current, subscribed=watching)
         snapshot.replace_card(updated)
         return updated
 

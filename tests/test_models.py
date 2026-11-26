@@ -81,3 +81,19 @@ def test_comment_author_id() -> None:
     nested = Comment.from_api({"id": "a2", "data": {"text": "hi"}, "memberCreator": {"id": "m9", "fullName": "Ada"}})
     assert nested.author_id == "m9"
     assert Comment.from_api({"id": "a3", "data": {"text": "hi"}}).author_id == ""
+
+
+def test_card_from_api_reads_subscribed() -> None:
+    base = {"id": "c1", "name": "Fix login", "idList": "l1", "idBoard": "b1"}
+    assert Card.from_api({**base, "subscribed": True}).subscribed is True
+    assert Card.from_api(base).subscribed is False
+
+
+def test_work_snapshot_add_card() -> None:
+    from tui_trello.models import Member, WorkSnapshot
+
+    work = WorkSnapshot(Member("m1", "Ada Lovelace", "ada"), [], {}, {})
+    card = Card(id="c1", name="Fix login", list_id="l1", board_id="b1")
+    assert work.card("c1") is None
+    work.add_card(card)
+    assert work.card("c1") == card

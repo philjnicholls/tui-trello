@@ -62,6 +62,6 @@ class CardScreen(CardActionsScreen):
         return self.app.store.find_card(self.card_id)
 
     def card_gone(self, card: Card) -> None:
-        """The card was archived or deleted: there is nothing left to show, so go back."""
+        """The card was archived, deleted or left (and nothing else holds it): nothing left to show, so go back."""
         if card.id == self.card_id and self.app.screen is self:
             self.app.pop_screen()

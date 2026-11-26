@@ -21,6 +21,8 @@ TIPS = (
     "work.",
     "`{card.move}` moves a card to another list; `{card.archive}` archives it.",
     "`{card.labels}` puts labels on a card or takes them off; type a new name to create one.",
+    "`{card.join}` joins a card or leaves it, `{card.members}` adds or removes anyone on the board, "
+    "`{card.watch}` watches it (👀).",
     "`{card.checklist}` ticks checklist items; type new text to add an item or a checklist.",
     "`{card.attachments}` lists a card's attachments: open one, or attach a file or a link.",
     "`{editor.attach}` in a comment or description attaches a file and puts its link in.",

@@ -18,7 +18,7 @@ or reaching for the mouse.
 - Vim-style keys everywhere (`j` `k` `gg` `G` `ctrl+d`), a command palette, and a `?` help that shows the keys for the
   view you are in. Every key can be changed in `config.toml`.
 - Create, move, archive and delete cards; edit descriptions; comment, reply, react, edit and delete comments; labels,
-  checklists and attachments.
+  members (join, leave, add, remove), watching, checklists and attachments.
 - Search every board on Trello, archived cards too, and filter the cards on screen (`#label`, `@member`, `!overdue`).
 - Follow and preview Trello links from card text, or open one at start-up with `--open`.
 - Unread notification counts, in-app toasts and desktop notifications.
@@ -255,6 +255,8 @@ can be changed: see [Changing keys](#changing-keys).
 | `m` `c` `o`            | move, comment (enter sends, alt+enter new line, `@` mentions), open in the browser |
 | `e`                    | edit the description (enter new line, ctrl+s saves)                                |
 | `t`                    | labels: enter puts one on or takes it off; type a new name to create one           |
+| `M` `J` `w`            | members: enter puts a board member on the card or takes them off; join or leave    |
+|                        | the card yourself; watch or unwatch it (👀)                                        |
 | `x`                    | checklist: enter ticks or unticks an item; type new text to add an item or list    |
 | `X`                    | show or hide ticked checklist items in the card pane (hidden at first; remembered) |
 | `a`                    | attachments: enter opens one in the browser, where you can save a file (`ctrl+s`   |
@@ -347,6 +349,9 @@ Every id, with its default key:
 | `card.description`            | `e`                    | Edit the description                              |
 | `card.labels`                 | `t`                    | Put labels on the card or take them off           |
 | `card.checklist`              | `x`                    | Tick checklist items, add items                   |
+| `card.members`                | `M`                    | Put board members on the card or take them off    |
+| `card.join`                   | `J`                    | Join the card, or leave it                        |
+| `card.watch`                  | `w`                    | Watch the card, or stop watching it               |
 | `card.attachments`            | `a`                    | Attachments: open, add                            |
 | `card.reply`                  | `C`                    | Reply to a comment                                |
 | `card.react`                  | `R`                    | React to a comment                                |

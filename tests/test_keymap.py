@@ -89,7 +89,7 @@ def test_printable_key_in_a_popup_is_refused() -> None:
     assert "j" in KeyMap.build({"picker.down": "j"}).warnings[0]
     assert KeyMap.build({"popup.preview": "p"}).warnings
     assert KeyMap.build({"picker.down": "ctrl+n"}).warnings == []
-    assert KeyMap.build({"card.move": "M"}).warnings == []  # a view has no text box focused
+    assert KeyMap.build({"card.move": "Z"}).warnings == []  # a view has no text box focused
 
 
 def test_clash_with_a_default_drops_the_override() -> None:

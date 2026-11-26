@@ -504,6 +504,62 @@ class LabelPickerScreen(PickerScreen):
             self.query_one(OptionList).highlighted = min(highlighted, len(self.shown) - 1)
 
 
+class MemberPickerScreen(PickerScreen):
+    """A card's members: Enter puts the highlighted board member on the card or takes them off, and the picker stays
+    open so several can be changed. You come first."""
+
+    HINT = "enter: on/off · {picker.close}: done"
+
+    def __init__(self, card_id: str) -> None:
+        self.card_id = card_id
+        super().__init__("Members", self.member_choices)
+
+    @property
+    def card(self):
+        return self.app.store.find_card(self.card_id)
+
+    async def member_choices(self) -> list[Choice]:
+        from tui_trello.ui.bidi import visual
+
+        store, card = self.app.store, self.card
+        me = await store.me()
+        members = await store.members(card.board_id)
+        self.query_one(".title", Label).update(Text.assemble("Members of “", visual(with_emoji(card.name)), "”"))
+        ordered = sorted(members, key=lambda m: (m.id != me.id, (m.full_name or m.username).lower()))
+        return [
+            Choice(member.full_name or member.username, member,
+                   " ".join(part for part in ("✓" if member.id in card.member_ids else "",
+                                              "you" if member.id == me.id else "") if part),
+                   visual(Text(f"{member.initials} ", style="cyan")), search=member.username)
+            for member in ordered
+        ]
+
+    def choose(self, choice: Choice) -> None:
+        self.apply(choice.value)
+
+    @work(group="members")  # not exclusive: a second Enter queues behind the first in the store, never cancels it
+    async def apply(self, member: Member) -> None:
+        store, card = self.app.store, self.card
+        if not card:  # an earlier press took the card away
+            self.dismiss(None)
+            return
+        try:
+            await store.toggle_member(card, member)
+        except BackendError as exc:
+            self.notify(str(exc), severity="error", markup=False)
+        else:
+            if not self.card and member.id == store.me_id:  # you left a card that only my work held
+                self.notify(f"You left “{with_emoji(card.name)}”", markup=False)
+        if not self.card:  # the card is gone from the store
+            self.dismiss(None)
+            return
+        highlighted = self.query_one(OptionList).highlighted
+        self.choices = await self.member_choices()
+        self.refilter()
+        if highlighted is not None:
+            self.query_one(OptionList).highlighted = min(highlighted, len(self.shown) - 1)
+
+
 class ChecklistPickerScreen(PickerScreen):
     """A card's checklist items: Enter ticks the highlighted one or unticks it, and the picker stays open so several
     can be done; typing text that matches no item offers to add it to a checklist, or to start a new checklist."""

@@ -95,6 +95,7 @@ class Card:
     desc: str = ""
     labels: tuple[Label, ...] = ()
     member_ids: tuple[str, ...] = ()
+    subscribed: bool = False  # you watch it on Trello (its "subscribed"); per member, so the logged-in one's
     due: datetime | None = None
     due_complete: bool = False
     pos: float = 0
@@ -124,6 +125,7 @@ class Card:
             desc=data.get("desc") or "",
             labels=tuple(Label.from_api(label) for label in data.get("labels") or ()),
             member_ids=tuple(data.get("idMembers") or ()),
+            subscribed=bool(data.get("subscribed", False)),
             due=_parse_date(data.get("due")),
             due_complete=data.get("dueComplete", False),
             pos=data.get("pos", 0),
@@ -421,6 +423,9 @@ class WorkSnapshot:
 
     def replace_card(self, card: Card) -> None:
         self.cards = [card if c.id == card.id else c for c in self.cards]
+
+    def add_card(self, card: Card) -> None:
+        self.cards.append(card)
 
     def remove_card(self, card_id: str) -> None:
         self.cards = [c for c in self.cards if c.id != card_id]

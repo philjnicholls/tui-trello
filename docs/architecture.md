@@ -104,6 +104,10 @@ CHANGELOG.md, docs/releasing.md   what each release changed, and how to make one
 - **Cards made meanwhile**: `Store.create_card` remembers each card it makes while a board fetch is under way, as
   `_replace` keeps it; a reload whose fetch started before a card was made adds it back, so a new card never vanishes
   until the next reload. A fetch is told from the cards made since by a tick of a counter, not a clock.
+- **Members and watching**: `Card.subscribed` is the logged-in member's watch (Trello's `subscribed`, per person).
+  `add_member` and `remove_member` read the card back, since the reply is undocumented and Trello may change
+  `subscribed` too. `Store._track_membership` keeps my work to the cards you are on: unlike `_remove`, it leaves the
+  open board alone. A screen whose card is in no snapshot any more gets `card_gone`.
 - **Notifications**: `TrelloApp.check_notifications` runs at start-up, every `[notifications] interval` seconds and
   on `r`. `Store.load_notifications` returns the unread ones it hadn't seen (none on the first load, so the backlog
   isn't announced), and `TrelloApp.announce` toasts them and raises a desktop notification through `ui/desktop.py`.

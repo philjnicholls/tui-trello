@@ -84,6 +84,12 @@ class Backend(Protocol):
 
     async def create_label(self, board_id: str, name: str, color: str | None) -> Label: ...
 
+    async def add_member(self, card: Card, member_id: str) -> Card: ...  # the card as Trello now has it
+
+    async def remove_member(self, card: Card, member_id: str) -> Card: ...  # likewise
+
+    async def set_watching(self, card: Card, watching: bool) -> Card: ...  # the logged-in member's watch
+
     async def checklists(self, card_id: str) -> list[Checklist]: ...
 
     async def set_check_item(self, card_id: str, item: CheckItem, checked: bool) -> CheckItem: ...

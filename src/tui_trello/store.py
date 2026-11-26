@@ -6,6 +6,7 @@ ones further down the stack, or in another mode) redraws from the same data.
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -51,6 +52,16 @@ class NewCardDraft:
     free: int
 
 
+@dataclass
+class _CardTurn:
+    """One card's queue of membership and watch changes: the lock that lets one run at a time, how many changes hold
+    or wait for it, and the card as the last of them left it."""
+
+    lock: asyncio.Lock
+    users: int = 0
+    last: Card | None = None
+
+
 class Store:
     def __init__(self, owner: DOMNode, backend: Backend, drafts: Drafts | None = None) -> None:
         self.backend = backend
@@ -58,6 +69,8 @@ class Store:
         self.drafts_changed: Signal[str] = Signal(owner, "drafts_changed")  # with the card's (or new card draft's) id
         self.comments_changed: Signal[str] = Signal(owner, "comments_changed")  # likewise; for reactions
         self._me: Member | None = None
+        # Per card with membership or watch changes under way or queued; gone once its queue is idle.
+        self._card_turns: dict[str, _CardTurn] = {}
         self.snapshot: BoardSnapshot | None = None
         self.work: WorkSnapshot | None = None
         self.board_changed: Signal[BoardSnapshot] = Signal(owner, "board_changed")
@@ -516,6 +529,58 @@ class Store:
         self._replace(updated)
         return updated
 
+    @asynccontextmanager
+    async def _card_turn(self, card_id: str) -> AsyncIterator[_CardTurn]:
+        """Wait for this card's turn at a membership or watch change. The queue goes once nobody holds or waits for
+        it, so a later change starts from the card it's given."""
+        turn = self._card_turns.setdefault(card_id, _CardTurn(asyncio.Lock()))
+        turn.users += 1
+        try:
+            async with turn.lock:
+                yield turn
+        finally:
+            turn.users -= 1
+            if turn.users <= 0 and self._card_turns.get(card_id) is turn:
+                del self._card_turns[card_id]
+
+    def _current(self, card: Card, turn: _CardTurn) -> Card:
+        """The card as the last change left it: the stored one, else (it's in no snapshot: opened from a notification
+        or a link, or a queued leave just dropped it from my work) the last queued change's result, else the
+        caller's."""
+        return self.find_card(card.id) or turn.last or card
+
+    async def toggle_member(self, card: Card, member: Member) -> Card:
+        """Put the member on the card, or take them off if they're on it. Changes queue, and each acts on the card as
+        the one before left it."""
+        me = await self.me()  # so my work can follow your own membership
+        async with self._card_turn(card.id) as turn:
+            card = self._current(card, turn)
+            async with self._busy("save"):
+                if member.id in card.member_ids:
+                    updated = await self.backend.remove_member(card, member.id)
+                else:
+                    updated = await self.backend.add_member(card, member.id)
+            turn.last = updated
+            left = self._track_membership(updated, me)
+            self._replace(updated)
+            if left:
+                self.work_changed.publish(self.work)
+        return updated
+
+    async def join_or_leave(self, card: Card) -> Card:
+        """Put the logged-in member on the card, or take them off."""
+        return await self.toggle_member(card, await self.me())
+
+    async def toggle_watching(self, card: Card) -> Card:
+        """Watch the card, or stop watching it (the logged-in member's watch)."""
+        async with self._card_turn(card.id) as turn:
+            card = self._current(card, turn)
+            async with self._busy("save"):
+                updated = await self.backend.set_watching(card, not card.subscribed)
+            turn.last = updated
+            self._replace(updated)
+        return updated
+
     async def create_label(self, card: Card, name: str) -> Card:
         """Make a new label on the card's board and put it on the card."""
         existing = await self.labels(card.board_id)
@@ -542,6 +607,19 @@ class Store:
         if self.work and self.work.card(card_id):
             self.work.remove_card(card_id)
             self.work_changed.publish(self.work)
+
+    def _track_membership(self, card: Card, me: Member) -> bool:
+        """Keep my work to the cards you're on: drop one you've left, add one you've joined (if my work knows its
+        list). Unlike `_remove`, the card stays on the open board. Publishes nothing; returns whether a card was
+        dropped, since `_replace` tells the screens about one that was added."""
+        if not self.work:
+            return False  # not loaded yet: its first load asks Trello
+        if me.id not in card.member_ids and self.work.card(card.id):
+            self.work.remove_card(card.id)
+            return True
+        if me.id in card.member_ids and not self.work.card(card.id) and card.list_id in self.work.lists:
+            self.work.add_card(card)
+        return False
 
     def _replace(self, card: Card) -> None:
         """Patch the card into every loaded snapshot that has it, and tell their screens."""
